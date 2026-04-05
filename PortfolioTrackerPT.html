@@ -3,8 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Content-Security-Policy" content="default-src * 'unsafe-inline' 'unsafe-eval' data: blob:;">
 <title>PortfolioTracker PT</title>
-<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.mini.min.js"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0;}
 :root{
@@ -938,12 +939,10 @@ const TICKER_ALIASES={
 async function fetchQuote(ticker2){
   const fx=window.PT.fxEURUSD||1.09;
   const yahooUrl=`https://query1.finance.yahoo.com/v8/finance/chart/${ticker2}?interval=1d&range=1d`;
-  const proxy=`https://api.allorigins.win/raw?url=${encodeURIComponent(yahooUrl)}`;
+  // Usa URL relativo — funciona tanto no Render como no GitHub Pages
+  const proxy=`https://portfolio-proxy-yc3o.onrender.com/?url=${encodeURIComponent(yahooUrl)}`;
   try{
-    const resp=await fetch(proxy,{
-      signal:AbortSignal.timeout(8000),
-      headers:{'X-Requested-With':'XMLHttpRequest'}
-    });
+    const resp=await fetch(proxy,{signal:AbortSignal.timeout(10000)});
     if(!resp.ok)return null;
     const text=await resp.text();
     if(!text||text.length<10)return null;
