@@ -383,7 +383,7 @@ select{padding:6px 9px;border-radius:var(--radius-sm);border:0.5px solid var(--c
     <div class="page-header">
       <div class="page-title">Relatório Fiscal — IRS Portugal</div>
       <div style="display:flex;gap:8px;align-items:center;">
-        <select id="fiscal-year" onchange="renderFiscal()"><option value="2026">2026</option><option value="2025">2025</option><option value="2024" selected>2024</option><option value="2023">2023</option><option value="2022">2022</option></select>
+        <select id="fiscal-year" onchange="renderFiscal()"><option value="2026">2026</option><option value="2025" selected>2025</option><option value="2024">2024</option><option value="2023">2023</option><option value="2022">2022</option></select>
         <button class="btn btn-sm" onclick="exportFiscalCSV()">⬇ Exportar CSV</button>
       </div>
     </div>
@@ -742,9 +742,85 @@ function parseETORO_XLSX(wb){
   return{transactions:txns,log};
 }
 
-function parseXTB_XLSX(wb){const txns=[],log=[];const wsCO=wb.Sheets['Cash Operations'];if(!wsCO)return{transactions:txns,log:['[ERRO] Cash Operations não encontrado']};const rows=XLSX.utils.sheet_to_json(wsCO,{header:1,defval:'',raw:false});const hIdx=rows.findIndex(r=>String(r[0]).trim()==='Type');if(hIdx<0)return{transactions:txns,log:['[ERRO] Header não encontrado']};const hdr=rows[hIdx].map(h=>String(h).trim().toLowerCase());const g=(row,...ns)=>{for(const n of ns){const i=hdr.indexOf(n);if(i>=0&&row[i]!==undefined&&row[i]!=='')return row[i];}return '';};const divMap={};rows.slice(hIdx+1).forEach(row=>{const type=String(g(row,'type')).trim();const rawTicker=String(g(row,'ticker')||'');const ticker2=cleanTk(rawTicker);const inst=String(g(row,'instrument')||ticker2);const timeRaw=g(row,'time');const amount=parseFloat(String(g(row,'amount')).replace(',','.'))||0;const comment=String(g(row,'comment')||'');const id=String(g(row,'id')||Math.random());const assetType=ga(inst,'');if(type==='Stock purchase'||type==='Stock sell'){const cm=comment.match(/(\d+(?:\.\d+)?)\s*@\s*([\d\.]+)/);const qty=cm?parseFloat(cm[1]):0;const price=cm?parseFloat(cm[2]):0;const totalEUR=Math.abs(amount);const ep=price>0?price:(qty>0?totalEUR/qty:0);if(qty>0)txns.push({date:nd(timeRaw),ticker:ticker2,product:inst,isin:'',type:type==='Stock purchase'?'BUY':'SELL',qty,price:ep,total:totalEUR,currency:'EUR',broker:'XTB',assetType,commission:0,autofx:0,totalCost:0,wht:0});}else if(type==='Dividend'){if(!divMap[id])divMap[id]={ticker:ticker2,inst,timeRaw,div:0,wht:0,assetType};divMap[id].div+=amount;}else if(type==='Withholding tax'){if(!divMap[id])divMap[id]={ticker:ticker2,inst,timeRaw,div:0,wht:0,assetType};divMap[id].wht+=Math.abs(amount);}});Object.values(divMap).forEach(d=>{if(d.div>0)txns.push({date:nd(d.timeRaw),ticker:d.ticker,product:d.inst,isin:'',type:'DIV',qty:1,price:d.div,total:d.div,currency:'EUR',broker:'XTB',assetType:d.assetType,commission:0,autofx:0,totalCost:0,wht:d.wht});});const b=txns.filter(t=>t.type==='BUY').length,s=txns.filter(t=>t.type==='SELL').length,dv=txns.filter(t=>t.type==='DIV').length;log.unshift(`[OK] XTB: ${b} compras | ${s} vendas | ${dv} dividendos`);return{transactions:txns,log};}
+function parseXTB_XLSX(wb){
+  const txns=[],log=[];
+  const wsCO=wb.Sheets['Cash Operations'];
+  if(!wsCO)return{transactions:txns,log:['[ERRO] Cash Operations não encontrado']};
+  const rows=XLSX.utils.sheet_to_json(wsCO,{header:1,defval:'',raw:false});
+  const hIdx=rows.findIndex(r=>String(r[0]).trim()==='Type');
+  if(hIdx<0)return{transactions:txns,log:['[ERRO] Header não encontrado']};
+  const hdr=rows[hIdx].map(h=>String(h).trim().toLowerCase());
+  const g=(row,...ns)=>{for(const n of ns){const i=hdr.indexOf(n);if(i>=0&&row[i]!==undefined&&row[i]!=='')return row[i];}return '';};
 
-function parseIBKR_PT(text){const txns=[],log=[];const lines=text.trim().split('\n');const rows=lines.map(l=>{const r=[];let cur='',inQ=false;for(let i=0;i<l.length;i++){const c=l[i];if(c==='"'){inQ=!inQ;}else if(c===','&&!inQ){r.push(cur.trim());cur='';}else{cur+=c;}}r.push(cur.trim());return r;});const txnRows=rows.filter(r=>r[0]==='Histórico de transações'&&r[1]==='Data');const fxRates={};txnRows.forEach(r=>{if(r[5]==='Componente de negociação de Forex'&&r[6]&&r[6].includes('EUR.USD')){const date=r[2]?r[2].substring(0,10):'';const rate=parseFloat(r[8])||0;if(date&&rate>0)fxRates[date]=rate;}});const divMap={};txnRows.forEach(r=>{const tipo=r[5];if(tipo==='Dividendo'||tipo==='Retenção de imposto estrangeiro'){const sym=r[6]&&r[6]!=='-'?r[6]:'';if(!sym)return;const date=r[2]?r[2].substring(0,10):'';const key=`${sym}|${date}`;if(!divMap[key])divMap[key]={sym,date,desc:r[4],div:0,wht:0};const val=parseFloat(String(r[12]).replace(',','.'))||0;if(tipo==='Dividendo')divMap[key].div+=val;else divMap[key].wht+=Math.abs(val);}});txnRows.forEach(r=>{const tipo=r[5];if(tipo!=='Compra'&&tipo!=='Venda')return;const sym=r[6]&&r[6]!=='-'?r[6]:'';if(!sym)return;const date=r[2]?r[2].substring(0,10):'';const qty=Math.abs(parseFloat(r[7])||0);const priceRaw=parseFloat(r[8])||0;const moeda=r[9]||'USD';const grossRaw=parseFloat(String(r[10]).replace(',','.'))||0;const commRaw=parseFloat(String(r[11]).replace(',','.'))||0;let priceEUR,totalEUR,commEUR;if(moeda==='EUR'){priceEUR=priceRaw;totalEUR=Math.abs(grossRaw);commEUR=Math.abs(commRaw);}else{const rate=fxRates[date]||Object.values(fxRates).slice(-1)[0]||1.1;priceEUR=priceRaw/rate;totalEUR=Math.abs(grossRaw)/rate;commEUR=Math.abs(commRaw)/rate;}const isinMatch=r[4]?r[4].match(/\(([A-Z]{2}[A-Z0-9]{10})\)/):null;const isin=isinMatch?isinMatch[1]:'';const ticker2=isin?(ISIN_T[isin]||sym):sym;const product=r[4]?r[4].split('(')[0].trim():sym;txns.push({date:nd(date),ticker:ticker2,product:product||sym,isin,type:tipo==='Compra'?'BUY':'SELL',qty,price:priceEUR,total:totalEUR,currency:'EUR',broker:'IBKR',assetType:ga(product||sym,isin),commission:commEUR,autofx:0,totalCost:commEUR,wht:0});});Object.values(divMap).forEach(d=>{if(d.div===0)return;const sym=d.sym;const isinMatch=d.desc?d.desc.match(/\(([A-Z]{2}[A-Z0-9]{10})\)/):null;const isin=isinMatch?isinMatch[1]:'';const ticker2=isin?(ISIN_T[isin]||sym):sym;txns.push({date:nd(d.date),ticker:ticker2,product:d.desc?d.desc.split('(')[0].trim():sym,isin,type:'DIV',qty:1,price:d.div,total:d.div,currency:'EUR',broker:'IBKR',assetType:ga(d.desc||sym,isin),commission:0,autofx:0,totalCost:0,wht:d.wht});});const b=txns.filter(t=>t.type==='BUY').length,s=txns.filter(t=>t.type==='SELL').length,dv=txns.filter(t=>t.type==='DIV').length;log.unshift(`[OK] IBKR: ${b} compras | ${s} vendas | ${dv} dividendos`);return{transactions:txns,log};}
+  // Agrupar por ID para evitar duplicados (XTB divide posição em múltiplas linhas)
+  const buyMap={};  // ID → {ticker, inst, timeRaw, totalEUR, qty, price, assetType}
+  const divMap={};  // ID → {ticker, inst, timeRaw, div, wht, assetType}
+
+  rows.slice(hIdx+1).forEach(row=>{
+    const type=String(g(row,'type')).trim();
+    const rawTicker=String(g(row,'ticker','symbol')||'');
+    const ticker2=cleanTk(rawTicker);
+    const inst=String(g(row,'instrument')||ticker2);
+    const timeRaw=g(row,'time');
+    const amount=parseFloat(String(g(row,'amount')).replace(',','.'))||0;
+    const comment=String(g(row,'comment')||'');
+    const id=String(g(row,'id')||Math.random());
+    const assetType=ga(inst,'');
+
+    if(type==='Stock purchase'||type==='Stock sell'){
+      // Usar Amount como fonte de verdade
+      const totalEUR=Math.abs(amount);
+      // Tentar extrair qty do comment, mas validar com amount
+      const cm=comment.match(/(\d+(?:\.\d+)?)\s*@\s*([\d\.]+)/);
+      let qty=cm?parseFloat(cm[1]):0;
+      let price=cm?parseFloat(cm[2]):0;
+      // Se qty*price bate com amount (±10%), usar; senão calcular price a partir de amount
+      if(qty>0&&price>0&&Math.abs(qty*price-totalEUR)/totalEUR>0.15){
+        // Comment inconsistente — usar amount e calcular price
+        price=totalEUR/qty;
+      }
+      if(qty<=0||price<=0)return; // sem dados suficientes
+      // Agrupar por ID para evitar duplicados
+      if(!buyMap[id])buyMap[id]={ticker:ticker2,inst,timeRaw,totalEUR:0,qty:0,price,assetType,isSell:type==='Stock sell'};
+      buyMap[id].totalEUR+=totalEUR;
+      buyMap[id].qty+=qty;
+    } else if(type==='Dividend'||type==='DIVIDENT'||type==='DIVIDENT '){
+      if(!divMap[id])divMap[id]={ticker:ticker2,inst,timeRaw,div:0,wht:0,assetType};
+      divMap[id].div+=amount;
+    } else if(type==='Withholding tax'||type==='Withholding Tax'){
+      if(!divMap[id])divMap[id]={ticker:ticker2,inst,timeRaw,div:0,wht:0,assetType};
+      // Soma algébrica — WHT pode ter estornos positivos
+      divMap[id].wht+=amount; // manter sinal para cancelamento
+    }
+  });
+
+  // Processar compras/vendas agrupadas
+  Object.values(buyMap).forEach(b=>{
+    const avgPrice=b.qty>0?b.totalEUR/b.qty:b.price;
+    txns.push({date:nd(b.timeRaw),ticker:b.ticker,product:b.inst,isin:'',
+      type:b.isSell?'SELL':'BUY',qty:b.qty,price:avgPrice,total:b.totalEUR,
+      currency:'EUR',broker:'XTB',assetType:b.assetType,
+      commission:0,autofx:0,totalCost:0,wht:0});
+  });
+
+  // Processar dividendos (WHT algébrico — negativos são retenções, positivos são estornos)
+  Object.values(divMap).forEach(d=>{
+    if(d.div>0){
+      const whtFinal=Math.abs(Math.min(0,d.wht)); // só o valor negativo líquido
+      txns.push({date:nd(d.timeRaw),ticker:d.ticker,product:d.inst,isin:'',
+        type:'DIV',qty:1,price:d.div,total:d.div,currency:'EUR',broker:'XTB',
+        assetType:d.assetType,commission:0,autofx:0,totalCost:0,wht:whtFinal});
+    }
+  });
+
+  const b=txns.filter(t=>t.type==='BUY').length;
+  const s=txns.filter(t=>t.type==='SELL').length;
+  const dv=txns.filter(t=>t.type==='DIV').length;
+  log.unshift(`[OK] XTB: ${b} compras | ${s} vendas | ${dv} dividendos`);
+  return{transactions:txns,log};
+}
+
+function parseIBKR_PT(text){const txns=[],log=[];const lines=text.trim().split('\n');const rows=lines.map(l=>{const r=[];let cur='',inQ=false;for(let i=0;i<l.length;i++){const c=l[i];if(c==='"'){inQ=!inQ;}else if(c===','&&!inQ){r.push(cur.trim());cur='';}else{cur+=c;}}r.push(cur.trim());return r;});const txnRows=rows.filter(r=>r[0]==='Histórico de transações'&&r[1]==='Data');const fxRates={};txnRows.forEach(r=>{if(r[5]==='Componente de negociação de Forex'&&r[6]&&r[6].includes('EUR.USD')){const date=r[2]?r[2].substring(0,10):'';const rate=parseFloat(r[8])||0;if(date&&rate>0)fxRates[date]=rate;}});const divMap={};txnRows.forEach(r=>{const tipo=r[5];if(tipo==='Dividendo'||tipo==='Retenção de imposto estrangeiro'){const sym=r[6]&&r[6]!=='-'?r[6]:'';if(!sym)return;const date=r[2]?r[2].substring(0,10):'';const key=`${sym}|${date}`;if(!divMap[key])divMap[key]={sym,date,desc:r[4],div:0,wht:0};const val=parseFloat(String(r[12]).replace(',','.'))||0;if(tipo==='Dividendo')divMap[key].div+=val;else divMap[key].wht+=val;}});txnRows.forEach(r=>{const tipo=r[5];if(tipo!=='Compra'&&tipo!=='Venda')return;const sym=r[6]&&r[6]!=='-'?r[6]:'';if(!sym)return;const date=r[2]?r[2].substring(0,10):'';const qty=Math.abs(parseFloat(r[7])||0);const priceRaw=parseFloat(r[8])||0;const moeda=r[9]||'USD';const grossRaw=parseFloat(String(r[10]).replace(',','.'))||0;const commRaw=parseFloat(String(r[11]).replace(',','.'))||0;let priceEUR,totalEUR,commEUR;if(moeda==='EUR'){priceEUR=priceRaw;totalEUR=Math.abs(grossRaw);commEUR=Math.abs(commRaw);}else{const rate=fxRates[date]||Object.values(fxRates).slice(-1)[0]||1.1;priceEUR=priceRaw/rate;totalEUR=Math.abs(grossRaw)/rate;commEUR=Math.abs(commRaw)/rate;}const isinMatch=r[4]?r[4].match(/\(([A-Z]{2}[A-Z0-9]{10})\)/):null;const isin=isinMatch?isinMatch[1]:'';const ticker2=isin?(ISIN_T[isin]||sym):sym;const product=r[4]?r[4].split('(')[0].trim():sym;txns.push({date:nd(date),ticker:ticker2,product:product||sym,isin,type:tipo==='Compra'?'BUY':'SELL',qty,price:priceEUR,total:totalEUR,currency:'EUR',broker:'IBKR',assetType:ga(product||sym,isin),commission:commEUR,autofx:0,totalCost:commEUR,wht:0});});Object.values(divMap).forEach(d=>{if(d.div===0)return;const sym=d.sym;const isinMatch=d.desc?d.desc.match(/\(([A-Z]{2}[A-Z0-9]{10})\)/):null;const isin=isinMatch?isinMatch[1]:'';const ticker2=isin?(ISIN_T[isin]||sym):sym;txns.push({date:nd(d.date),ticker:ticker2,product:d.desc?d.desc.split('(')[0].trim():sym,isin,type:'DIV',qty:1,price:d.div,total:d.div,currency:'EUR',broker:'IBKR',assetType:ga(d.desc||sym,isin),commission:0,autofx:0,totalCost:0,wht:Math.abs(Math.min(0,d.wht))});});const b=txns.filter(t=>t.type==='BUY').length,s=txns.filter(t=>t.type==='SELL').length,dv=txns.filter(t=>t.type==='DIV').length;log.unshift(`[OK] IBKR: ${b} compras | ${s} vendas | ${dv} dividendos`);return{transactions:txns,log};}
 
 function parseFREEDOM24(h,r){const g=(...ns)=>{for(const n of ns){const i=h.indexOf(n);if(i>=0&&r[i]&&r[i]!=='')return r[i];}return '';};const date=g('date','tradedate');const ticker2=g('ticker','symbol','isin');const t=g('operation','type','transactiontype').toLowerCase();const type=t.includes('sell')?'SELL':t.includes('div')?'DIV':'BUY';const qty=Math.abs(pn(g('quantity','volume','qty')));const price=Math.abs(pn(g('price','tradeprice')));const comm=Math.abs(pn(g('commission','fee','fees')));if(!ticker2)return null;return{date:nd(date),ticker:cleanTk(ticker2).substring(0,8),product:ticker2,isin:'',type,qty,price,total:qty*price,currency:g('currency')||'USD',broker:'Freedom24',assetType:ga(ticker2,''),commission:comm,autofx:0,totalCost:comm,wht:0};}
 function parseManualCSV(h,r){const g=(...ns)=>{for(const n of ns){const i=h.indexOf(n);if(i>=0&&r[i]&&r[i]!=='')return r[i];}return '';};const date=g('date');const ticker2=g('ticker','symbol');const type=(g('type')||'BUY').toUpperCase();const qty=Math.abs(pn(g('qty','quantity')));const price=Math.abs(pn(g('price')));const comm=Math.abs(pn(g('cost','commission','fee')));const broker=g('broker')||'Manual';if(!ticker2)return null;return{date:nd(date),ticker:ticker2.toUpperCase(),product:g('product')||ticker2,isin:'',type,qty,price,total:qty*price,currency:g('currency')||'EUR',broker,assetType:ga(ticker2,''),commission:comm,autofx:0,totalCost:comm,wht:0};}
@@ -900,7 +976,7 @@ function computePositions(){
 function updateBrokerFilterBtns(){const brokers=[...new Set(window.PT.positions.map(p=>p.broker))];document.getElementById('broker-filter-btns').innerHTML=brokers.map(b=>`<button class="filter-btn" onclick="filterPos('${window.PT.posFilter.type}','${b}',this)">${b}</button>`).join('');}
 
 // ── COTAÇÕES ──────────────────────────────────────────────────────────────────
-function yahooSym(ticker2,assetType){const es={'SXR8':'.DE','EMIM':'.L','IWDA':'.L','VWCE':'.DE','QDV5':'.DE','IS0E':'.DE','2B78':'.DE','IUSP':'.AS','H4Z7':'.L','IUSQ':'.L','IBAB':'.AS','XESC':'.DE','GOAI':'.DE','ESIT':'.DE','WTEM':'.DE','EPRU':'.AS','SHL':'.DE','STLAM':'.MI','RYAAY':'.L'};if(es[ticker2])return ticker2+es[ticker2];if(assetType==='Cripto')return ticker2+'-EUR';return ticker2;}
+function yahooSym(ticker2,assetType){const es={'SXR8':'.DE','EMIM':'.L','IWDA':'.L','VWCE':'.DE','QDV5':'.DE','IS0E':'.DE','2B78':'.DE','IUSP':'.AS','H4Z7':'.DE','IUSQ':'.DE','IBAB':'.BR','XESC':'.DE','GOAI':'.DE','ESIT':'.DE','WTEM':'.DE','EPRU':'.AS','SHL':'.DE','STLAM':'.MI','RYAAY':'.L'};if(es[ticker2])return ticker2+es[ticker2];if(assetType==='Cripto')return ticker2+'-EUR';return ticker2;}
 // Proxy CORS — só allorigins que já funciona na tua rede
 // query1 e query2 do Yahoo são intercambiáveis — alternamos para distribuir carga
 
@@ -908,7 +984,7 @@ function yahooSym(ticker2,assetType){const es={'SXR8':'.DE','EMIM':'.L','IWDA':'
 // Mapa de aliases — ticker app → símbolo Yahoo Finance correto
 const TICKER_ALIASES={
   'DOC1':'DOC','STLAM':'STLA','RYAAY':'RYA.L',
-  'H4Z7':'H4Z7.L','IUSQ':'IUSQ.L','IBAB':'IBAB.AS',
+  'H4Z7':'H4Z7.DE','IUSQ':'IUSQ.DE','IBAB':'IBAB.BR',
   'SXR8':'SXR8.DE','EMIM':'EMIM.L','IWDA':'IWDA.L','VWCE':'VWCE.DE',
   'QDV5':'QDV5.DE','IS0E':'IS0E.DE','2B78':'2B78.DE','WTEM':'WTEM.DE',
   'GOAI':'GOAI.DE','XESC':'XESC.DE','ESIT':'ESIT.DE','EPRU':'EPRU.AS',
@@ -939,8 +1015,13 @@ const TICKER_ALIASES={
 
 async function fetchQuote(ticker2){
   const fx=window.PT.fxEURUSD||1.09;
+  const fxGBP=window.PT.fxEURGBP||0.856;
+  const fxCHF=window.PT.fxEURCHF||0.946;
+  const fxSEK=window.PT.fxEURSEK||11.5;
+  const fxNOK=window.PT.fxEURNOK||11.8;
+  const fxDKK=window.PT.fxEURDKK||7.46;
+  const fxHKD=window.PT.fxEURHKD||8.5;
   const yahooUrl=`https://query1.finance.yahoo.com/v8/finance/chart/${ticker2}?interval=1d&range=1d`;
-  // Usa URL relativo — funciona tanto no Render como no GitHub Pages
   const proxy=`https://portfolio-proxy-yc3o.onrender.com/?url=${encodeURIComponent(yahooUrl)}`;
   try{
     const resp=await fetch(proxy,{signal:AbortSignal.timeout(10000)});
@@ -955,16 +1036,17 @@ async function fetchQuote(ticker2){
     const currency=meta.currency||'USD';
     let priceEUR=price;
     if(currency==='USD')priceEUR=price/fx;
-    else if(currency==='GBp')priceEUR=price/100/(fx*0.856);
-    else if(currency==='GBP')priceEUR=price/(fx*0.856);
-    else if(currency==='CHF')priceEUR=price/0.946;
-    else if(currency==='DKK')priceEUR=price/7.46;
-    else if(currency==='SEK')priceEUR=price/11.5;
-    else if(currency==='NOK')priceEUR=price/11.8;
-    else if(currency==='HKD')priceEUR=price/8.5;
+    else if(currency==='GBp')priceEUR=price/100/fxGBP;
+    else if(currency==='GBP')priceEUR=price/fxGBP;
+    else if(currency==='CHF')priceEUR=price/fxCHF;
+    else if(currency==='DKK')priceEUR=price/fxDKK;
+    else if(currency==='SEK')priceEUR=price/fxSEK;
+    else if(currency==='NOK')priceEUR=price/fxNOK;
+    else if(currency==='HKD')priceEUR=price/fxHKD;
     return{price,prev,priceEUR,change:price-prev,changePct:prev>0?((price-prev)/prev)*100:0,currency};
   }catch(e){return null;}
 }
+
 
 async function refreshQuotes(){
   const pos=window.PT.positions;if(!pos.length){notify('Sem posições');return;}
@@ -974,8 +1056,22 @@ async function refreshQuotes(){
   const results={ok:[],fail:[],alias:[]};
 
   // EUR/USD live
+  // Taxas de câmbio dinâmicas
   try{const fxQ=await fetchQuote('EURUSD=X');if(fxQ&&fxQ.price>0)window.PT.fxEURUSD=fxQ.price;}catch(e){}
   if(!window.PT.fxEURUSD)window.PT.fxEURUSD=1.09;
+  // Buscar outras taxas em paralelo
+  try{
+    const [gbp,chf,sek,nok,dkk,hkd]=await Promise.all([
+      fetchQuote('EURGBP=X'),fetchQuote('EURCHF=X'),fetchQuote('EURSEK=X'),
+      fetchQuote('EURNOK=X'),fetchQuote('EURDKK=X'),fetchQuote('EURHKD=X')
+    ]);
+    if(gbp?.price>0)window.PT.fxEURGBP=gbp.price;
+    if(chf?.price>0)window.PT.fxEURCHF=chf.price;
+    if(sek?.price>0)window.PT.fxEURSEK=sek.price;
+    if(nok?.price>0)window.PT.fxEURNOK=nok.price;
+    if(dkk?.price>0)window.PT.fxEURDKK=dkk.price;
+    if(hkd?.price>0)window.PT.fxEURHKD=hkd.price;
+  }catch(e){}
 
   const CACHE_MS=15*60*1000;
   const tickers=[...new Set(pos.map(p=>p.ticker))];
