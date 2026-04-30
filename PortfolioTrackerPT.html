@@ -771,15 +771,21 @@ function parseXTB_XLSX(wb){
       const isSell=type==='Stock sale'||type==='Stock sell';
       const totalEUR=Math.abs(amount);
       // Comment: "OPEN BUY 300 @ 5.09" ou "CLOSE BUY 300/1500 @ 5.52"
-      const cm=comment.match(/(\d+)(?:\/\d+)?\s*@\s*([\d\.]+)/);
+      const cm=comment.match(/(\d+(?:\.\d+)?)(?:\/\d+)?\s*@\s*([\d\.]+)/);
       let qty=cm?parseFloat(cm[1]):0;
-      let price=cm?parseFloat(cm[2]):0;
-      if(qty<=0||price<=0)return;
-      // Validar: se qty*price difere muito de totalEUR, recalcular price
-      // (o amount já inclui conversão EUR, price está em USD)
-      if(!buyMap[id])buyMap[id]={ticker:ticker2,inst,timeRaw,totalEUR:0,qty:0,price,assetType,isSell};
-      buyMap[id].totalEUR+=totalEUR;
-      buyMap[id].qty+=qty;
+      if(qty<=0)return;
+      if(isSell){
+        // Vendas: cada linha é um lote FIFO separado — NÃO agrupar
+        txns.push({date:nd(timeRaw),ticker:ticker2,product:inst,isin:'',
+          type:'SELL',qty,price:totalEUR/qty,total:totalEUR,
+          currency:'EUR',broker:'XTB',assetType,
+          commission:0,autofx:0,totalCost:0,wht:0});
+      } else {
+        // Compras: agrupar por ID para evitar duplicados
+        if(!buyMap[id])buyMap[id]={ticker:ticker2,inst,timeRaw,totalEUR:0,qty:0,assetType,isSell:false};
+        buyMap[id].totalEUR+=totalEUR;
+        buyMap[id].qty+=qty;
+      }
     } else if(type==='Dividend'||type==='DIVIDENT'||type==='DIVIDENT '){
       if(!divMap[id])divMap[id]={ticker:ticker2,inst,timeRaw,div:0,wht:0,assetType};
       divMap[id].div+=amount;
@@ -790,11 +796,11 @@ function parseXTB_XLSX(wb){
     }
   });
 
-  // Processar compras/vendas agrupadas
+  // Processar compras agrupadas
   Object.values(buyMap).forEach(b=>{
-    const avgPrice=b.qty>0?b.totalEUR/b.qty:b.price;
+    const avgPrice=b.qty>0?b.totalEUR/b.qty:0;
     txns.push({date:nd(b.timeRaw),ticker:b.ticker,product:b.inst,isin:'',
-      type:b.isSell?'SELL':'BUY',qty:b.qty,price:avgPrice,total:b.totalEUR,
+      type:'BUY',qty:b.qty,price:avgPrice,total:b.totalEUR,
       currency:'EUR',broker:'XTB',assetType:b.assetType,
       commission:0,autofx:0,totalCost:0,wht:0});
   });
@@ -1342,26 +1348,14 @@ function renderFiscal(){
   let mvAcoes=0,mvCripto=0;
   const mvRows=[];
 
-  // Agrupar vendas por ticker+broker para deduplicar (XTB pode ter duplicados)
+  // Deduplicar vendas — apenas remove duplicados exactos (mesmo ticker+broker+data+qty)
   const sellsDedup=[];
-  const seenSells=new Map();
+  const seenSells=new Set();
   sells.forEach(sell=>{
-    const key=`${sell.ticker}|${sell.broker}|${sell.date}`;
+    const key=`${sell.ticker}|${sell.broker}|${sell.date}|${sell.qty}`;
     if(!seenSells.has(key)){
-      seenSells.set(key,{...sell});
-      sellsDedup.push(seenSells.get(key));
-    } else {
-      // Acumula qty na venda existente (caso real de venda parcial)
-      // mas não duplica se qty é igual (duplicado do parser)
-      const existing=seenSells.get(key);
-      if(Math.abs(existing.qty-sell.qty)>0.001){
-        // Quantidades diferentes — é uma venda separada real
-        const key2=`${key}|${sell.qty}`;
-        if(!seenSells.has(key2)){
-          seenSells.set(key2,{...sell});
-          sellsDedup.push(seenSells.get(key2));
-        }
-      }
+      seenSells.add(key);
+      sellsDedup.push(sell);
     }
   });
 
