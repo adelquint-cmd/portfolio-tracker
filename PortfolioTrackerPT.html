@@ -775,11 +775,16 @@ function parseXTB_XLSX(wb){
       let qty=cm?parseFloat(cm[1]):0;
       if(qty<=0)return;
       if(isSell){
-        // Vendas: cada linha é um lote FIFO separado — NÃO agrupar
-        txns.push({date:nd(timeRaw),ticker:ticker2,product:inst,isin:'',
-          type:'SELL',qty,price:totalEUR/qty,total:totalEUR,
-          currency:'EUR',broker:'XTB',assetType,
-          commission:0,autofx:0,totalCost:0,wht:0});
+        // Agrupar vendas pelo total da posição (Comment: "CLOSE BUY 24/300" → posição de 300)
+        // Isto reconstrói a venda real antes do FIFO interno do XTB
+        const totalPos=comment.match(/\/(\d+)/);
+        const posTotal=totalPos?parseInt(totalPos[1]):qty;
+        const posKey=`${ticker2}|${nd(timeRaw)}|${posTotal}`;
+        if(!buyMap['sell_'+posKey]){
+          buyMap['sell_'+posKey]={ticker:ticker2,inst,timeRaw,totalEUR:0,qty:0,assetType,isSell:true,_xtbId:'sell_'+posKey};
+        }
+        buyMap['sell_'+posKey].totalEUR+=totalEUR;
+        buyMap['sell_'+posKey].qty+=qty;
       } else {
         // Compras: agrupar por ID para evitar duplicados
         if(!buyMap[id])buyMap[id]={ticker:ticker2,inst,timeRaw,totalEUR:0,qty:0,assetType,isSell:false};
@@ -796,13 +801,14 @@ function parseXTB_XLSX(wb){
     }
   });
 
-  // Processar compras agrupadas
+  // Processar compras e vendas agrupadas
   Object.values(buyMap).forEach(b=>{
     const avgPrice=b.qty>0?b.totalEUR/b.qty:0;
     txns.push({date:nd(b.timeRaw),ticker:b.ticker,product:b.inst,isin:'',
-      type:'BUY',qty:b.qty,price:avgPrice,total:b.totalEUR,
+      type:b.isSell?'SELL':'BUY',qty:b.qty,price:avgPrice,total:b.totalEUR,
       currency:'EUR',broker:'XTB',assetType:b.assetType,
-      commission:0,autofx:0,totalCost:0,wht:0});
+      commission:0,autofx:0,totalCost:0,wht:0,
+      ...(b._xtbId?{_xtbId:b._xtbId}:{})});
   });
 
   // Processar dividendos (WHT algébrico — negativos são retenções, positivos são estornos)
@@ -1348,11 +1354,11 @@ function renderFiscal(){
   let mvAcoes=0,mvCripto=0;
   const mvRows=[];
 
-  // Deduplicar vendas — apenas remove duplicados exactos (mesmo ticker+broker+data+qty)
+  // Deduplicar vendas — usa ID XTB quando disponível, senão ticker+broker+data+qty
   const sellsDedup=[];
   const seenSells=new Set();
   sells.forEach(sell=>{
-    const key=`${sell.ticker}|${sell.broker}|${sell.date}|${sell.qty}`;
+    const key=sell._xtbId?`xtb_${sell._xtbId}`:`${sell.ticker}|${sell.broker}|${sell.date}|${sell.qty}|${sell.total}`;
     if(!seenSells.has(key)){
       seenSells.add(key);
       sellsDedup.push(sell);
