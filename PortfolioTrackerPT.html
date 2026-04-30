@@ -767,21 +767,17 @@ function parseXTB_XLSX(wb){
     const id=String(g(row,'id')||Math.random());
     const assetType=ga(inst,'');
 
-    if(type==='Stock purchase'||type==='Stock sell'){
-      // Usar Amount como fonte de verdade
+    if(type==='Stock purchase'||type==='Stock sale'||type==='Stock sell'){
+      const isSell=type==='Stock sale'||type==='Stock sell';
       const totalEUR=Math.abs(amount);
-      // Tentar extrair qty do comment, mas validar com amount
-      const cm=comment.match(/(\d+(?:\.\d+)?)\s*@\s*([\d\.]+)/);
+      // Comment: "OPEN BUY 300 @ 5.09" ou "CLOSE BUY 300/1500 @ 5.52"
+      const cm=comment.match(/(\d+)(?:\/\d+)?\s*@\s*([\d\.]+)/);
       let qty=cm?parseFloat(cm[1]):0;
       let price=cm?parseFloat(cm[2]):0;
-      // Se qty*price bate com amount (±10%), usar; senão calcular price a partir de amount
-      if(qty>0&&price>0&&Math.abs(qty*price-totalEUR)/totalEUR>0.15){
-        // Comment inconsistente — usar amount e calcular price
-        price=totalEUR/qty;
-      }
-      if(qty<=0||price<=0)return; // sem dados suficientes
-      // Agrupar por ID para evitar duplicados
-      if(!buyMap[id])buyMap[id]={ticker:ticker2,inst,timeRaw,totalEUR:0,qty:0,price,assetType,isSell:type==='Stock sell'};
+      if(qty<=0||price<=0)return;
+      // Validar: se qty*price difere muito de totalEUR, recalcular price
+      // (o amount já inclui conversão EUR, price está em USD)
+      if(!buyMap[id])buyMap[id]={ticker:ticker2,inst,timeRaw,totalEUR:0,qty:0,price,assetType,isSell};
       buyMap[id].totalEUR+=totalEUR;
       buyMap[id].qty+=qty;
     } else if(type==='Dividend'||type==='DIVIDENT'||type==='DIVIDENT '){
@@ -1391,14 +1387,16 @@ function renderFiscal(){
     // FIFO: distribuir a venda pelos lotes de compra por ordem cronológica
     let qtyLeft=sell.qty;
     const proceedsEURTotal=sell.total>0?sell.total:sell.qty*sell.price;
+    const pricePerShare=proceedsEURTotal/sell.qty; // EUR por ação na venda
 
     buys.forEach(buy=>{
       if(qtyLeft<=0)return;
       const qtyUsed=Math.min(qtyLeft,buy.qty);
       qtyLeft-=qtyUsed;
-      const frac=qtyUsed/sell.qty; // fração da venda total
-      const costEUR=buy.total>0?(qtyUsed/buy.qty)*buy.total:qtyUsed*buy.price;
-      const proceedsEUR=proceedsEURTotal*frac;
+      // Custo por ação deste lote de compra
+      const costPerShare=buy.total>0?buy.total/buy.qty:buy.price;
+      const costEUR=qtyUsed*costPerShare;
+      const proceedsEUR=qtyUsed*pricePerShare;
       const gain=proceedsEUR-costEUR;
       const days=(new Date(sell.date)-new Date(buy.date))/86400000;
       const exempt=sell.assetType==='Cripto'&&days>=365;
