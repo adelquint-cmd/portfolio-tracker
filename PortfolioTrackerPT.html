@@ -1337,25 +1337,110 @@ function renderCustos(){
 }
 
 function renderFiscal(){
-  const year=parseInt(document.getElementById('fiscal-year').value);const txns=window.PT.transactions;
+  const year=parseInt(document.getElementById('fiscal-year').value);
+  const txns=window.PT.transactions;
   const sells=txns.filter(t=>t.type==='SELL'&&new Date(t.date).getFullYear()===year);
   const divs=txns.filter(t=>t.type==='DIV'&&new Date(t.date).getFullYear()===year);
-  let mvAcoes=0,mvCripto=0;const mvRows=[];
+
+  // FIFO por lote — gera 1 linha por lote de compra usado em cada venda
+  let mvAcoes=0,mvCripto=0;
+  const mvRows=[];
+
+  // Agrupar vendas por ticker+broker para deduplicar (XTB pode ter duplicados)
+  const sellsDedup=[];
+  const seenSells=new Map();
   sells.forEach(sell=>{
-    const k=sell.isin&&sell.isin.length>5?sell.isin:sell.ticker;
-    const buys=txns.filter(t=>t.type==='BUY'&&(t.isin===k||t.ticker===sell.ticker)&&t.broker===sell.broker&&new Date(t.date)<=new Date(sell.date));
-    const avgCost=buys.length?buys.reduce((s,b)=>s+b.price,0)/buys.length:sell.price;
-    const gain=sell.qty*(sell.price-avgCost);const firstBuy=buys.length?buys[0].date:'?';
-    const days=buys.length?(new Date(sell.date)-new Date(firstBuy))/86400000:400;
-    const exempt=sell.assetType==='Cripto'&&days>=365;
-    if(!exempt){if(sell.assetType==='Cripto')mvCripto+=gain;else mvAcoes+=gain;}
-    mvRows.push({sell,avgCost,gain,firstBuy,exempt});
+    const key=`${sell.ticker}|${sell.broker}|${sell.date}`;
+    if(!seenSells.has(key)){
+      seenSells.set(key,{...sell});
+      sellsDedup.push(seenSells.get(key));
+    } else {
+      // Acumula qty na venda existente (caso real de venda parcial)
+      // mas não duplica se qty é igual (duplicado do parser)
+      const existing=seenSells.get(key);
+      if(Math.abs(existing.qty-sell.qty)>0.001){
+        // Quantidades diferentes — é uma venda separada real
+        const key2=`${key}|${sell.qty}`;
+        if(!seenSells.has(key2)){
+          seenSells.set(key2,{...sell});
+          sellsDedup.push(seenSells.get(key2));
+        }
+      }
+    }
   });
-  const tax=Math.max(0,(mvAcoes+mvCripto)*0.28),divTotal=divs.reduce((s,t)=>s+t.total,0),whtTotal=divs.reduce((s,t)=>s+(t.wht||0),0);
-  document.getElementById('f-mv-ac').textContent='€'+mvAcoes.toFixed(2);document.getElementById('f-mv-cr').textContent='€'+mvCripto.toFixed(2);document.getElementById('f-tax').textContent='€'+tax.toFixed(2);document.getElementById('f-div').textContent='€'+divTotal.toFixed(2);document.getElementById('f-wht').textContent='€'+whtTotal.toFixed(2);
+
+  sellsDedup.forEach(sell=>{
+    // Encontrar todas as compras anteriores do mesmo ticker+broker (FIFO)
+    const buys=txns.filter(t=>
+      t.type==='BUY'&&
+      t.ticker===sell.ticker&&
+      t.broker===sell.broker&&
+      new Date(t.date)<=new Date(sell.date)
+    ).sort((a,b)=>new Date(a.date)-new Date(b.date));
+
+    if(!buys.length){
+      // Sem compras registadas — 1 linha com dados da venda
+      const gain=sell.total||sell.qty*sell.price;
+      mvRows.push({ticker:sell.ticker,product:sell.product,assetType:sell.assetType,
+        buyDate:'?',sellDate:sell.date,qty:sell.qty,
+        costEUR:0,proceedsEUR:sell.total||sell.qty*sell.price,gain,exempt:false});
+      if(sell.assetType==='Cripto')mvCripto+=gain;else mvAcoes+=gain;
+      return;
+    }
+
+    // FIFO: distribuir a venda pelos lotes de compra por ordem cronológica
+    let qtyLeft=sell.qty;
+    const proceedsEURTotal=sell.total>0?sell.total:sell.qty*sell.price;
+
+    buys.forEach(buy=>{
+      if(qtyLeft<=0)return;
+      const qtyUsed=Math.min(qtyLeft,buy.qty);
+      qtyLeft-=qtyUsed;
+      const frac=qtyUsed/sell.qty; // fração da venda total
+      const costEUR=buy.total>0?(qtyUsed/buy.qty)*buy.total:qtyUsed*buy.price;
+      const proceedsEUR=proceedsEURTotal*frac;
+      const gain=proceedsEUR-costEUR;
+      const days=(new Date(sell.date)-new Date(buy.date))/86400000;
+      const exempt=sell.assetType==='Cripto'&&days>=365;
+      if(!exempt){if(sell.assetType==='Cripto')mvCripto+=gain;else mvAcoes+=gain;}
+      mvRows.push({ticker:sell.ticker,product:sell.product,assetType:sell.assetType,
+        buyDate:buy.date,sellDate:sell.date,qty:qtyUsed,
+        costEUR,proceedsEUR,gain,exempt});
+    });
+  });
+
+  const tax=Math.max(0,(mvAcoes+mvCripto)*0.28);
+  const divTotal=divs.reduce((s,t)=>s+t.total,0);
+  const whtTotal=divs.reduce((s,t)=>s+(t.wht||0),0);
+  document.getElementById('f-mv-ac').textContent='€'+mvAcoes.toFixed(2);
+  document.getElementById('f-mv-cr').textContent='€'+mvCripto.toFixed(2);
+  document.getElementById('f-tax').textContent='€'+tax.toFixed(2);
+  document.getElementById('f-div').textContent='€'+divTotal.toFixed(2);
+  document.getElementById('f-wht').textContent='€'+whtTotal.toFixed(2);
+
   const tagMap={'Ação':'tag-acao','ETF':'tag-etf','Cripto':'tag-cripto','CFD':'tag-cfd'};
-  document.getElementById('fiscal-mv-body').innerHTML=mvRows.length?mvRows.map(r=>`<tr><td><strong>${r.sell.ticker}</strong><br><span style="font-size:11px;color:var(--color-text-secondary);">${(r.sell.product||'').substring(0,25)}</span></td><td><span class="tag ${tagMap[r.sell.assetType]||'tag-acao'}">${r.sell.assetType}</span></td><td style="font-size:12px;">${r.firstBuy}</td><td style="font-size:12px;">${r.sell.date}</td><td class="num">${r.sell.qty}</td><td class="num">${r.avgCost.toFixed(4)}</td><td class="num">${r.sell.price.toFixed(4)}</td><td class="num ${r.gain>=0?'pos':'neg'}">${r.gain>=0?'+':''}${r.gain.toFixed(2)}</td><td>${r.exempt?'<span class="badge badge-green">Isento ≥365d</span>':'<span class="badge badge-amber">Tributável</span>'}</td></tr>`).join(''):`<tr><td colspan="9"><div class="empty-state"><div class="empty-title">Sem vendas em ${year}</div></div></td></tr>`;
-  document.getElementById('fiscal-div-body').innerHTML=divs.length?divs.map(d=>`<tr><td>${d.ticker}</td><td>${d.date}</td><td>${d.broker}</td><td class="num">€${Number(d.total).toFixed(2)}</td><td class="num neg">${d.wht?'-€'+Number(d.wht).toFixed(2):'—'}</td><td class="num">€${(Number(d.total)-Number(d.wht||0)).toFixed(2)}</td></tr>`).join(''):`<tr><td colspan="6"><div class="empty-state"><div class="empty-title">Sem dividendos em ${year}</div></div></td></tr>`;
+  document.getElementById('fiscal-mv-body').innerHTML=mvRows.length
+    ?mvRows.map(r=>`<tr>
+      <td><strong>${r.ticker}</strong><br><span style="font-size:11px;color:var(--color-text-secondary);">${(r.product||'').substring(0,25)}</span></td>
+      <td><span class="tag ${tagMap[r.assetType]||'tag-acao'}">${r.assetType}</span></td>
+      <td style="font-size:12px;">${r.buyDate}</td>
+      <td style="font-size:12px;">${r.sellDate}</td>
+      <td class="num">${Number(r.qty).toFixed(r.qty%1===0?0:3)}</td>
+      <td class="num">€${r.costEUR.toFixed(2)}</td>
+      <td class="num">€${r.proceedsEUR.toFixed(2)}</td>
+      <td class="num ${r.gain>=0?'pos':'neg'}">${r.gain>=0?'+':''}€${r.gain.toFixed(2)}</td>
+      <td>${r.exempt?'<span class="badge badge-green">Isento ≥365d</span>':'<span class="badge badge-amber">Tributável</span>'}</td>
+    </tr>`).join('')
+    :`<tr><td colspan="9"><div class="empty-state"><div class="empty-title">Sem vendas em ${year}</div></div></td></tr>`;
+
+  document.getElementById('fiscal-div-body').innerHTML=divs.length
+    ?divs.map(d=>`<tr>
+      <td>${d.ticker}</td><td>${d.date}</td><td>${d.broker}</td>
+      <td class="num">€${Number(d.total).toFixed(2)}</td>
+      <td class="num neg">${d.wht?'-€'+Number(d.wht).toFixed(2):'—'}</td>
+      <td class="num">€${(Number(d.total)-Number(d.wht||0)).toFixed(2)}</td>
+    </tr>`).join('')
+    :`<tr><td colspan="6"><div class="empty-state"><div class="empty-title">Sem dividendos em ${year}</div></div></td></tr>`;
 }
 
 function exportFiscalCSV(){const year=document.getElementById('fiscal-year').value;const sells=window.PT.transactions.filter(t=>t.type==='SELL'&&new Date(t.date).getFullYear()==year);if(!sells.length){notify('Sem vendas em '+year);return;}download('"Produto","ISIN","Data Venda","Quantidade","Preço EUR","Total EUR","Comissão EUR","Corretora","Tipo"\n'+sells.map(s=>`"${s.product}","${s.isin||''}",${s.date},${s.qty},${Number(s.price).toFixed(4)},${Number(s.total).toFixed(2)},${Number(s.totalCost||0).toFixed(2)},${s.broker},${s.assetType}`).join('\n'),`fiscal_irs_${year}.csv`,'text/csv;charset=utf-8;');}
