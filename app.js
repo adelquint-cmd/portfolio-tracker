@@ -211,7 +211,7 @@ function computePositions(){
     const isinKey=txn.isin&&txn.isin.length>5?txn.isin:txn.ticker;const k=`${isinKey}|${txn.broker}`;
     if(!map[k])map[k]={ticker:txn.ticker,product:txn.product,isin:txn.isin||'',broker:txn.broker,assetType:txn.assetType,qty:0,lots:[],totalCommissions:0};
     const p=map[k];
-    if((txn.product||'').length>(p.product||'').length)p.product=txn.product;
+    if((txn.type==='BUY'||txn.type==='SELL')&&(txn.product||'').length>(p.product||'').length)p.product=txn.product;
     if(txn.isin&&txn.isin.length>5)p.isin=txn.isin;
     if(txn.type==='BUY'){p.qty+=txn.qty;p.lots.push({qty:txn.qty,price:txn.price,date:txn.date,remaining:txn.qty});p.totalCommissions+=(txn.totalCost||0);}
     else if(txn.type==='SELL'){let s=txn.qty;for(const l of p.lots){if(s<=0)break;const c=Math.min(l.remaining,s);l.remaining-=c;s-=c;}p.qty=Math.max(0,p.qty-txn.qty);}
@@ -303,9 +303,18 @@ function filterPos(type,broker,btn){
   document.getElementById('pt-n').textContent=lot?`${rows.length} lote${rows.length!==1?'s':''}`:`${rows.length} posiç${rows.length!==1?'ões':'ão'}`;
   document.getElementById('pos-head').innerHTML=lot
     ?'<tr><th>Produto</th><th>Tipo</th><th>Corretora</th><th>Data compra</th><th class="num">Dias</th><th class="num">Qtd</th><th class="num">Custo/un €</th><th class="num">Custo total €</th><th class="num">Cotação €</th><th class="num">Valor atual €</th><th class="num">P&amp;L €</th><th class="num">P&amp;L %</th></tr>'
-    :'<tr><th>Produto</th><th>Tipo</th><th>Corretora</th><th>1ª compra</th><th class="num">Lotes</th><th class="num">Qtd</th><th class="num">Custo méd €</th><th class="num">Custo total €</th><th class="num">Cotação €</th><th class="num">Valor atual €</th><th class="num">P&amp;L €</th><th class="num">P&amp;L %</th></tr>';
+    :'<tr><th>Produto</th><th>Tipo</th><th>Corretoras</th><th>1ª compra</th><th class="num">Lotes</th><th class="num">Qtd</th><th class="num">Custo méd €</th><th class="num">Custo total €</th><th class="num">Cotação €</th><th class="num">Valor atual €</th><th class="num">P&amp;L €</th><th class="num">P&amp;L %</th></tr>';
   if(!rows.length){body.innerHTML='<tr><td colspan="12"><div class="empty-state"><div class="empty-icon">📊</div><div class="empty-title">Sem posições neste filtro</div></div></td></tr>';document.getElementById('pos-count').textContent='';return;}
   const n2=v=>v.toLocaleString('pt-PT',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const open=window.PT.posOpen||(window.PT.posOpen=new Set());
+  const plC=(pl,c)=>{const pp=pl!==null&&c>=1?pl/c*100:null;return`<td class="num">${pl!==null?`<span style="color:${pl>=0?'var(--accent-dark)':'var(--red)'};font-weight:500;">${pl>=0?'+':''}${fmt(pl)}</span>`:'—'}</td><td class="num">${pp!==null?`<span style="font-size:11px;color:${pp>=0?'var(--accent-dark)':'var(--red)'}">${pp>=0?'+':''}${pp.toFixed(1)}%</span>`:'—'}</td>`;};
+  const qf=v=>v%1===0?v.toLocaleString('pt-PT'):v.toFixed(4);
+  if(!lot){body.innerHTML=rows.map(x=>{
+    const exp=x.nLots>1,isOpen=exp&&open.has(x.key);
+    const head=`<tr${exp?` onclick="togglePosGroup('${x.key}')" style="cursor:pointer;"`:''}><td><strong style="font-size:12px;">${exp?`<span style="display:inline-block;width:12px;color:var(--color-text-secondary);">${isOpen?'▾':'▸'}</span>`:''}${x.ticker}</strong><br><span style="font-size:11px;color:var(--color-text-secondary);">${(x.product||'').substring(0,30)}</span>${x.isin?`<br><span class="isin-chip">${x.isin}</span>`:''}</td><td><span class="tag ${tagMap[x.assetType]||'tag-acao'}">${x.assetType}</span></td><td style="font-size:12px;">${x.brokers.join('<br>')}</td><td style="font-size:12px;">${x.date}</td><td class="num">${x.nLots}</td><td class="num"><strong>${qf(x.qty)}</strong></td><td class="num">${x.avg.toLocaleString('pt-PT',{minimumFractionDigits:2,maximumFractionDigits:4})}</td><td class="num">${fmt(x.cost)}</td><td class="num">${x.mkt?n2(x.mkt):'<span style="color:var(--color-text-secondary);font-size:11px;">—</span>'}</td><td class="num">${x.val!==null?'€'+fmt(x.val):'—'}</td>${plC(x.pl,x.cost)}</tr>`;
+    if(!isOpen)return head;
+    return head+x.lots.map(l=>`<tr style="background:var(--color-background-secondary);font-size:12px;"><td style="padding-left:26px;color:var(--color-text-secondary);">${l.ticker!==x.ticker?l.ticker+' · ':''}${l.days} dias</td><td></td><td>${l.broker}</td><td>${l.date}</td><td></td><td class="num">${qf(l.qty)}</td><td class="num">${l.price.toLocaleString('pt-PT',{minimumFractionDigits:2,maximumFractionDigits:4})}</td><td class="num">${fmt(l.cost)}</td><td></td><td class="num">${l.val!==null?'€'+fmt(l.val):'—'}</td>${plC(l.pl,l.cost)}</tr>`).join('');
+  }).join('');document.getElementById('pos-count').textContent=rows.some(x=>x.nLots>1)?'Clica num ativo com ▸ para ver todas as compras e corretoras.':'';return;}
   body.innerHTML=rows.map(x=>{
     const plPct=x.pl!==null&&x.cost>=1?x.pl/x.cost*100:null,qs=x.qty%1===0?x.qty.toLocaleString('pt-PT'):x.qty.toFixed(4);
     return`<tr><td><strong style="font-size:12px;">${x.ticker}</strong><br><span style="font-size:11px;color:var(--color-text-secondary);">${(x.product||'').substring(0,30)}</span>${x.isin?`<br><span class="isin-chip">${x.isin}</span>`:''}</td><td><span class="tag ${tagMap[x.assetType]||'tag-acao'}">${x.assetType}</span></td><td style="font-size:12px;">${x.broker}</td><td style="font-size:12px;">${x.date}</td><td class="num">${lot?x.days:x.nLots}</td><td class="num">${qs}</td><td class="num">${x.avg.toLocaleString('pt-PT',{minimumFractionDigits:2,maximumFractionDigits:4})}</td><td class="num">${fmt(x.cost)}</td><td class="num">${x.mkt?n2(x.mkt):'<span style="color:var(--color-text-secondary);font-size:11px;">—</span>'}</td><td class="num">${x.val!==null?'€'+fmt(x.val):'—'}</td><td class="num">${x.pl!==null?`<span style="color:${x.pl>=0?'var(--accent-dark)':'var(--red)'};font-weight:500;">${x.pl>=0?'+':''}${fmt(x.pl)}</span>`:'—'}</td><td class="num">${plPct!==null?`<span style="font-size:11px;color:${plPct>=0?'var(--accent-dark)':'var(--red)'}">${plPct>=0?'+':''}${plPct.toFixed(1)}%</span>`:'—'}</td></tr>`;
@@ -388,12 +397,27 @@ function posRows(){
       const cost=l.qty*l.price,m=mk(l),val=m?l.qty*m:null;
       return{...l,cost,avg:l.price,mkt:m,val,pl:val!==null?val-cost:null,days:Math.floor((today-new Date(l.date))/86400000),nLots:1};});
   }
+  // Agrupa o mesmo ativo entre corretoras: ISIN, ou ISIN conhecido do mesmo ticker, ou ticker (com aliases)
+  const isinByTk={};lots.forEach(l=>{if(l.isin)isinByTk[canonTk(l.ticker)]=l.isin;});
+  openLots().forEach(l=>{if(l.isin&&!isinByTk[canonTk(l.ticker)])isinByTk[canonTk(l.ticker)]=l.isin;});
   const g={};
-  lots.forEach(l=>{const k=(l.isin||l.ticker)+'|'+l.broker;if(!g[k])g[k]={...l,qty:0,cost:0,first:l.date,last:l.date,nLots:0};
-    const x=g[k];x.qty+=l.qty;x.cost+=l.qty*l.price;x.nLots++;if(l.date<x.first)x.first=l.date;if(l.date>x.last)x.last=l.date;});
-  return Object.values(g).map(x=>{const m=mk(x),val=m?x.qty*m:null;return{...x,date:x.first,avg:x.cost/x.qty,mkt:m,val,pl:val!==null?val-x.cost:null};})
+  lots.forEach(l=>{const ct=canonTk(l.ticker),k=l.isin||isinByTk[ct]||ct;
+    if(!g[k])g[k]={key:k,ticker:ct,product:l.product,isin:l.isin||isinByTk[ct]||'',assetType:l.assetType,qty:0,cost:0,first:l.date,last:l.date,nLots:0,brokers:[],tickers:[],lots:[]};
+    const x=g[k];x.qty+=l.qty;x.cost+=l.qty*l.price;x.nLots++;x.lots.push(l);
+    if(!x.brokers.includes(l.broker))x.brokers.push(l.broker);if(!x.tickers.includes(l.ticker))x.tickers.push(l.ticker);
+    if(nicerName(l.product,x.product))x.product=l.product;
+    if(l.date<x.first)x.first=l.date;if(l.date>x.last)x.last=l.date;});
+  return Object.values(g).map(x=>{
+    const qt=x.tickers.map(t=>q[t]).find(v=>v&&isFinite(v.priceEUR)&&v.priceEUR>0),m=qt?qt.priceEUR:null,val=m?x.qty*m:null;
+    x.lots=x.lots.sort((a,b)=>a.date.localeCompare(b.date)).map(l=>{const c=l.qty*l.price,v=m?l.qty*m:null;return{...l,cost:c,val:v,pl:v!==null?v-c:null,days:Math.floor((today-new Date(l.date))/86400000)};});
+    return{...x,broker:x.brokers.join(' · '),date:x.first,avg:x.cost/x.qty,mkt:m,val,pl:val!==null?val-x.cost:null};})
     .sort((a,b)=>b.cost-a.cost);
 }
+const TK_CANON={'DOC1':'DOC'};
+function canonTk(t){return TK_CANON[t]||t;}
+// Prefere nomes em maiúsculas/minúsculas ("Alexandria") a nomes todos em maiúsculas; senão o mais completo
+function nicerName(a,b){if(!a)return false;if(!b)return true;const up=s=>s===s.toUpperCase();if(up(b)&&!up(a))return true;if(up(a)&&!up(b))return false;return a.length>b.length;}
+function togglePosGroup(k){const o=window.PT.posOpen||(window.PT.posOpen=new Set());o.has(k)?o.delete(k):o.add(k);const f=window.PT.posFilter;filterPos(f.type,f.broker,null);}
 function exportPosCSV(){
   const f=window.PT.posFilter,rows=posRows();if(!rows.length){notify('Sem posições para exportar');return;}
   const lot=f.view==='lot';
