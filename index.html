@@ -1,0 +1,556 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Content-Security-Policy" content="default-src * 'unsafe-inline' 'unsafe-eval' data: blob:;">
+<title>PortfolioTracker PT</title>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.mini.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;}
+:root{
+  --accent:#1D9E75;--accent-light:#E1F5EE;--accent-dark:#0F6E56;
+  --red:#E24B4A;--red-light:#FCEBEB;--amber:#BA7517;--amber-light:#FAEEDA;
+  --blue:#185FA5;--blue-light:#E6F1FB;--radius:12px;--radius-sm:7px;
+  --color-background-primary:#ffffff;--color-background-secondary:#f5f5f4;
+  --color-text-primary:#1c1917;--color-text-secondary:#78716c;
+  --color-border-tertiary:#e7e5e4;--color-border-secondary:#d6d3d1;
+  --font-sans:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;
+}
+@media(prefers-color-scheme:dark){
+  :root{
+    --color-background-primary:#1c1917;--color-background-secondary:#292524;
+    --color-text-primary:#fafaf9;--color-text-secondary:#a8a29e;
+    --color-border-tertiary:#3c3835;--color-border-secondary:#57534e;
+  }
+}
+html,body{height:100%;}
+body{font-family:var(--font-sans);background:var(--color-background-primary);color:var(--color-text-primary);}
+.app{display:flex;flex-direction:column;height:100vh;}
+.topbar{display:flex;align-items:center;justify-content:space-between;padding:12px 20px;border-bottom:0.5px solid var(--color-border-tertiary);background:var(--color-background-primary);flex-shrink:0;}
+.logo{display:flex;align-items:center;gap:10px;}
+.logo-mark{width:28px;height:28px;background:linear-gradient(135deg,var(--accent),var(--accent-dark));border-radius:8px;display:flex;align-items:center;justify-content:center;}
+.logo-mark svg{width:14px;height:14px;fill:white;}
+.logo-name{font-size:15px;font-weight:500;color:var(--color-text-primary);letter-spacing:-0.01em;}
+.logo-name span{color:var(--accent);}
+.topbar-right{display:flex;gap:6px;align-items:center;flex-wrap:wrap;}
+.nav{display:flex;padding:0 20px;border-bottom:0.5px solid var(--color-border-tertiary);background:var(--color-background-primary);overflow-x:auto;flex-shrink:0;}
+.nav-btn{padding:10px 14px;border:none;background:transparent;cursor:pointer;font-size:13px;color:var(--color-text-secondary);white-space:nowrap;border-bottom:2px solid transparent;margin-bottom:-0.5px;font-family:inherit;transition:all 0.15s;}
+.nav-btn:hover{color:var(--color-text-primary);}
+.nav-btn.active{color:var(--accent-dark);border-bottom-color:var(--accent);font-weight:500;}
+.content{flex:1;overflow-y:auto;}
+.section{display:none;}.section.active{display:block;}
+.kpi{background:var(--color-background-secondary);border-radius:var(--radius);padding:16px;position:relative;overflow:hidden;}
+.kpi-label{font-size:10px;font-weight:500;color:var(--color-text-secondary);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:8px;}
+.kpi-value{font-size:26px;font-weight:300;color:var(--color-text-primary);letter-spacing:-0.02em;line-height:1;}
+.kpi-sub{font-size:11px;margin-top:5px;color:var(--color-text-secondary);}
+.kpi.accent{background:var(--accent);}.kpi.accent .kpi-label{color:rgba(255,255,255,0.7);}.kpi.accent .kpi-value{color:white;}.kpi.accent .kpi-sub{color:rgba(255,255,255,0.8);}
+.pos{color:var(--accent-dark);}.neg{color:var(--red);}
+.pos-big{color:var(--accent);font-weight:400;}.neg-big{color:var(--red);font-weight:400;}
+.dash-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;padding:14px 20px;}
+.dash-grid-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;padding:0 20px 14px;}
+@media(max-width:700px){.dash-grid,.dash-grid-3{grid-template-columns:1fr;}.kpi-grid{grid-template-columns:1fr 1fr !important;}}
+.panel{background:var(--color-background-primary);border:0.5px solid var(--color-border-tertiary);border-radius:var(--radius);padding:16px;}
+.panel-title{font-size:10px;font-weight:500;color:var(--color-text-secondary);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;}
+.broker-row{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:var(--radius-sm);cursor:pointer;transition:background 0.12s;margin-bottom:4px;}
+.broker-row:hover{background:var(--color-background-secondary);}
+.broker-row:last-child{margin-bottom:0;}
+.b-icon{width:30px;height:30px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:500;flex-shrink:0;color:white;}
+.b-info{flex:1;min-width:0;}.b-name{font-size:13px;font-weight:500;color:var(--color-text-primary);}.b-sub{font-size:11px;color:var(--color-text-secondary);}
+.b-val{text-align:right;}.b-eur{font-size:13px;font-weight:500;color:var(--color-text-primary);}.b-pct{font-size:11px;color:var(--color-text-secondary);}
+.donut-wrap{display:flex;align-items:center;gap:16px;}
+.donut-legend{display:flex;flex-direction:column;gap:8px;flex:1;}
+.legend-row{display:flex;align-items:center;justify-content:space-between;gap:8px;}
+.legend-left{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--color-text-secondary);}
+.legend-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;}
+.legend-right{font-size:12px;font-weight:500;color:var(--color-text-primary);}
+.bar-item{margin-bottom:10px;}.bar-item:last-child{margin-bottom:0;}
+.bar-header{display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px;}
+.bar-label{color:var(--color-text-secondary);}.bar-pct{font-weight:500;color:var(--color-text-primary);}
+.bar-track{height:5px;background:var(--color-background-secondary);border-radius:3px;overflow:hidden;}
+.bar-fill{height:100%;border-radius:3px;}
+.div-strip{display:flex;flex-direction:column;gap:6px;}
+.div-row{display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:0.5px solid var(--color-border-tertiary);}
+.div-row:last-child{border-bottom:none;}
+.div-ticker{font-size:12px;font-weight:500;color:var(--color-text-primary);}
+.div-broker{font-size:10px;color:var(--color-text-secondary);}
+.div-amt{font-size:12px;font-weight:500;color:var(--accent-dark);}
+.div-wht{font-size:10px;color:var(--red);}
+.pos-section{padding:20px;}
+.filter-bar{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;align-items:center;}
+.filter-btn{padding:5px 12px;border-radius:20px;border:0.5px solid var(--color-border-tertiary);background:transparent;cursor:pointer;font-size:12px;color:var(--color-text-secondary);font-family:inherit;transition:all 0.12s;}
+.filter-btn:hover{background:var(--color-background-secondary);}
+.filter-btn.active{background:var(--color-text-primary);color:var(--color-background-primary);border-color:var(--color-text-primary);}
+.table-card{background:var(--color-background-primary);border:0.5px solid var(--color-border-tertiary);border-radius:var(--radius);overflow:hidden;}
+.table-wrap{overflow-x:auto;}
+table{width:100%;border-collapse:collapse;font-size:13px;}
+th{font-size:10px;font-weight:500;color:var(--color-text-secondary);text-align:left;padding:8px 10px;border-bottom:0.5px solid var(--color-border-tertiary);text-transform:uppercase;letter-spacing:0.05em;white-space:nowrap;}
+td{padding:10px 10px;border-bottom:0.5px solid var(--color-border-tertiary);color:var(--color-text-primary);vertical-align:middle;}
+tr:last-child td{border-bottom:none;}
+tr:hover td{background:var(--color-background-secondary);}
+.num{text-align:right;font-variant-numeric:tabular-nums;font-size:12px;}
+.badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:500;}
+.badge-green{background:var(--accent-light);color:var(--accent-dark);}
+.badge-red{background:var(--red-light);color:var(--red);}
+.badge-blue{background:var(--blue-light);color:var(--blue);}
+.badge-amber{background:var(--amber-light);color:var(--amber);}
+.tag{display:inline-block;padding:2px 7px;border-radius:4px;font-size:11px;font-weight:500;}
+.tag-acao{background:var(--blue-light);color:var(--blue);}
+.tag-etf{background:var(--accent-light);color:var(--accent-dark);}
+.tag-cripto{background:var(--amber-light);color:var(--amber);}
+.tag-cfd{background:#f1efe8;color:#5f5e5a;}
+.btn{padding:7px 13px;border-radius:var(--radius-sm);border:0.5px solid var(--color-border-secondary);background:var(--color-background-primary);cursor:pointer;font-size:13px;color:var(--color-text-primary);font-family:inherit;transition:all 0.12s;display:inline-flex;align-items:center;gap:5px;}
+.btn:hover{background:var(--color-background-secondary);}
+.btn-primary{background:var(--accent);color:white;border-color:var(--accent-dark);}
+.btn-primary:hover{background:var(--accent-dark);}
+.btn-sm{padding:5px 10px;font-size:12px;}
+.btn-danger{background:var(--red-light);color:var(--red);border-color:var(--red);}
+.btn-success{background:var(--accent-light);color:var(--accent-dark);border-color:var(--accent);}
+.import-section{padding:20px;}
+.broker-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:9px;margin-bottom:16px;}
+.broker-card{border:0.5px solid var(--color-border-tertiary);border-radius:var(--radius);padding:13px;cursor:pointer;transition:all 0.12s;background:var(--color-background-primary);}
+.broker-card:hover{border-color:var(--color-border-secondary);}
+.broker-card.selected{border-color:var(--accent);background:var(--accent-light);}
+.bc-icon{width:28px;height:28px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:500;color:white;margin-bottom:7px;}
+.bc-name{font-size:13px;font-weight:500;color:var(--color-text-primary);margin-bottom:2px;}
+.bc-hint{font-size:11px;color:var(--color-text-secondary);line-height:1.4;}
+.degiro-uploads{display:none;background:var(--color-background-secondary);border-radius:var(--radius);padding:14px;margin-bottom:14px;border:0.5px solid var(--color-border-tertiary);}
+.degiro-uploads.visible{display:flex;flex-direction:column;gap:10px;}
+.upload-row{display:flex;align-items:center;gap:10px;}
+.upload-label{font-size:12px;font-weight:500;color:var(--color-text-primary);min-width:120px;flex-shrink:0;}
+.upload-status{font-size:11px;color:var(--color-text-secondary);}
+.upload-status.ok{color:var(--accent-dark);}
+.drop-zone{border:1.5px dashed var(--color-border-secondary);border-radius:var(--radius);padding:24px;text-align:center;transition:all 0.15s;margin-bottom:14px;}
+.drop-zone:hover,.drop-zone.dragover{border-color:var(--accent);background:var(--accent-light);}
+.preview-box{background:var(--color-background-primary);border:0.5px solid var(--color-border-tertiary);border-radius:var(--radius);overflow:hidden;margin-bottom:10px;}
+.preview-header{padding:10px 14px;border-bottom:0.5px solid var(--color-border-tertiary);display:flex;align-items:center;justify-content:space-between;}
+.preview-scroll{overflow-x:auto;max-height:180px;overflow-y:auto;}
+.import-log{font-size:11px;color:var(--color-text-secondary);background:var(--color-background-secondary);border-radius:var(--radius-sm);padding:9px 12px;margin-bottom:10px;max-height:90px;overflow-y:auto;font-family:monospace;line-height:1.6;white-space:pre;}
+.fiscal-section{padding:20px;}
+.fiscal-tabs{display:flex;gap:4px;margin-bottom:14px;flex-wrap:wrap;}
+.ftab{padding:5px 13px;border-radius:20px;border:0.5px solid var(--color-border-tertiary);background:transparent;cursor:pointer;font-size:12px;color:var(--color-text-secondary);font-family:inherit;}
+.ftab:hover{background:var(--color-background-secondary);}
+.ftab.active{background:var(--color-text-primary);color:var(--color-background-primary);border-color:var(--color-text-primary);}
+.alert{padding:11px 13px;border-radius:var(--radius-sm);font-size:13px;margin-bottom:12px;line-height:1.5;}
+.alert-info{background:var(--blue-light);color:var(--blue);border-left:2px solid var(--blue);}
+.alert-warn{background:var(--amber-light);color:var(--amber);border-left:2px solid var(--amber);}
+.isin-chip{font-family:monospace;font-size:10px;color:var(--color-text-secondary);background:var(--color-background-secondary);padding:1px 5px;border-radius:3px;}
+.cost-pill{display:inline-block;padding:1px 6px;border-radius:3px;font-size:10px;background:var(--red-light);color:var(--red);font-weight:500;}
+.spinner{display:inline-block;width:13px;height:13px;border:2px solid var(--color-border-tertiary);border-top-color:var(--accent);border-radius:50%;animation:spin 0.7s linear infinite;vertical-align:middle;}
+@keyframes spin{to{transform:rotate(360deg);}}
+.modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:100;align-items:center;justify-content:center;padding:20px;}
+.modal-overlay.open{display:flex;}
+.modal{background:var(--color-background-primary);border:0.5px solid var(--color-border-secondary);border-radius:var(--radius);padding:22px;width:min(480px,100%);max-height:90vh;overflow-y:auto;}
+.modal-title{font-size:15px;font-weight:500;margin-bottom:16px;color:var(--color-text-primary);}
+.field{margin-bottom:12px;}
+.field label{display:block;font-size:12px;color:var(--color-text-secondary);margin-bottom:5px;font-weight:500;}
+.field input,.field select,.field textarea{width:100%;padding:8px 10px;border-radius:var(--radius-sm);border:0.5px solid var(--color-border-secondary);background:var(--color-background-secondary);color:var(--color-text-primary);font-size:13px;font-family:inherit;}
+.field input:focus,.field select:focus{outline:none;border-color:var(--accent);}
+.field-row{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+.modal-footer{display:flex;gap:7px;justify-content:flex-end;margin-top:18px;}
+.pw-bar{display:flex;gap:3px;margin-top:5px;}
+.pw-seg{height:3px;flex:1;border-radius:2px;background:var(--color-border-tertiary);transition:background 0.2s;}
+.notif{position:fixed;bottom:20px;right:20px;background:var(--color-text-primary);color:var(--color-background-primary);padding:11px 16px;border-radius:var(--radius);font-size:13px;z-index:200;transform:translateY(60px);opacity:0;transition:all 0.25s;pointer-events:none;max-width:320px;box-shadow:0 4px 12px rgba(0,0,0,0.15);}
+.notif.show{transform:translateY(0);opacity:1;}
+.page-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:8px;}
+.page-title{font-size:15px;font-weight:500;color:var(--color-text-primary);}
+.empty-state{text-align:center;padding:32px 20px;}
+.empty-icon{font-size:28px;margin-bottom:8px;opacity:0.5;}
+.empty-title{font-size:14px;font-weight:500;color:var(--color-text-primary);margin-bottom:3px;}
+.empty-text{font-size:12px;color:var(--color-text-secondary);}
+select{padding:6px 9px;border-radius:var(--radius-sm);border:0.5px solid var(--color-border-tertiary);background:var(--color-background-primary);color:var(--color-text-primary);font-family:inherit;font-size:12px;cursor:pointer;}
+/* Manual txn form */
+.manual-form{background:var(--color-background-secondary);border:0.5px solid var(--color-border-tertiary);border-radius:var(--radius);padding:16px;margin-bottom:16px;}
+.manual-form-title{font-size:12px;font-weight:500;color:var(--color-text-primary);margin-bottom:12px;display:flex;align-items:center;gap:6px;}
+.type-tabs{display:flex;gap:4px;margin-bottom:12px;}
+.type-tab{padding:6px 14px;border-radius:var(--radius-sm);border:0.5px solid var(--color-border-secondary);background:var(--color-background-primary);cursor:pointer;font-size:12px;font-weight:500;font-family:inherit;color:var(--color-text-secondary);}
+.type-tab.active-buy{background:var(--accent);color:white;border-color:var(--accent-dark);}
+.type-tab.active-sell{background:var(--red);color:white;border-color:var(--red);}
+.type-tab.active-div{background:var(--blue);color:white;border-color:var(--blue);}
+</style>
+</head>
+<body>
+<div class="app">
+<div class="topbar">
+  <div class="logo">
+    <div class="logo-mark"><svg viewBox="0 0 14 14"><polygon points="7,1 13,11 1,11"/></svg></div>
+    <div class="logo-name">Portfolio<span>PT</span></div>
+  </div>
+  <div class="topbar-right">
+    <button class="btn btn-sm" onclick="refreshQuotes()" id="btn-quotes">↻ Cotações</button>
+    <button class="btn btn-sm btn-success" onclick="openModal('modal-txn')">+ Transação</button>
+    <button class="btn btn-sm" onclick="switchTab('importar',document.querySelectorAll('.nav-btn')[5])" style="background:var(--blue-light);color:var(--blue);border-color:var(--blue);">⬆ Importar</button>
+    <button class="btn btn-sm" onclick="openModal('modal-backup')">⬇ Backup</button>
+    <button class="btn btn-sm btn-primary" onclick="openModal('modal-restore')">⬆ Restore</button>
+    <button class="btn btn-sm btn-danger" onclick="clearAll()">Limpar</button>
+  </div>
+</div>
+<nav class="nav">
+  <button class="nav-btn active" onclick="switchTab('dashboard',this)">Dashboard</button>
+  <button class="nav-btn" onclick="switchTab('posicoes',this)">Posições</button>
+  <button class="nav-btn" onclick="switchTab('transacoes',this)">Transações</button>
+  <button class="nav-btn" onclick="switchTab('custos',this)">Custos</button>
+  <button class="nav-btn" onclick="switchTab('importar',this)">Importar</button>
+  <button class="nav-btn" onclick="switchTab('fiscal',this)">Fiscal IRS</button>
+</nav>
+<div class="content">
+
+<!-- DASHBOARD -->
+<div class="section active" id="tab-dashboard">
+  <div style="padding:16px 20px 0;">
+    <div style="display:grid;grid-template-columns:1.4fr 1fr 1fr 1fr 1fr 0.9fr;gap:10px;margin-bottom:14px;" class="kpi-grid">
+      <div class="kpi accent"><div class="kpi-label">Valor atual</div><div class="kpi-value" id="kpi-total">€0</div><div class="kpi-sub" id="kpi-total-sub">clica ↻ Cotações</div></div>
+      <div class="kpi"><div class="kpi-label">Custo total</div><div class="kpi-value" id="kpi-cost">€0</div><div class="kpi-sub" id="kpi-cost-sub">—</div></div>
+      <div class="kpi"><div class="kpi-label">P&amp;L total</div><div class="kpi-value" id="kpi-pl">€0</div><div class="kpi-sub" id="kpi-pl-pct">—</div></div>
+      <div class="kpi"><div class="kpi-label">Dividendos</div><div class="kpi-value" id="kpi-div">€0</div><div class="kpi-sub">este ano</div></div>
+      <div class="kpi"><div class="kpi-label">Posições</div><div class="kpi-value" id="kpi-pos">0</div><div class="kpi-sub" id="kpi-pos-sub">0 corretoras</div></div>
+      <div class="kpi" id="kpi-quotes-card" onclick="refreshQuotes()" style="cursor:pointer;" title="Clica para atualizar">
+        <div class="kpi-label">Cotações</div>
+        <div style="display:flex;align-items:center;gap:8px;margin-top:4px;">
+          <svg id="quotes-donut-svg" width="44" height="44" viewBox="0 0 44 44">
+            <circle cx="22" cy="22" r="16" fill="none" stroke="var(--color-border-tertiary)" stroke-width="6"/>
+            <circle id="quotes-donut-arc" cx="22" cy="22" r="16" fill="none" stroke="#e0e0e0" stroke-width="6" stroke-dasharray="0 100.53" stroke-linecap="round" transform="rotate(-90 22 22)"/>
+            <text id="quotes-donut-pct" x="22" y="26" text-anchor="middle" font-size="9" font-weight="500" fill="var(--color-text-primary)">0%</text>
+          </svg>
+          <div>
+            <div id="quotes-ok-count" style="font-size:13px;font-weight:500;color:var(--color-text-primary);">0/0</div>
+            <div id="quotes-last-time" style="font-size:10px;color:var(--color-text-secondary);">nunca</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="dash-grid">
+    <div class="panel"><div class="panel-title">Por corretora <span style="font-weight:400;font-size:9px;opacity:0.7;">CLICA PARA FILTRAR</span></div><div id="broker-list"><div class="empty-state" style="padding:20px;"><div class="empty-text">Importa ficheiros para começar</div></div></div></div>
+    <div class="panel"><div class="panel-title">Alocação por tipo</div><div class="donut-wrap"><canvas id="donut" width="110" height="110"></canvas><div class="donut-legend" id="donut-legend"></div></div></div>
+  </div>
+  <div class="dash-grid-3">
+    <div class="panel"><div class="panel-title">Peso por tipo</div><div id="alloc-bars"><div class="empty-text" style="font-size:12px;">Sem dados</div></div></div>
+    <div class="panel"><div class="panel-title">Top posições</div><div id="top-positions"><div class="empty-text" style="font-size:12px;">Sem dados</div></div></div>
+    <div class="panel"><div class="panel-title">Dividendos recentes</div><div class="div-strip" id="recent-divs"><div class="empty-text" style="font-size:12px;">Sem dividendos</div></div></div>
+  </div>
+</div>
+
+<!-- POSIÇÕES -->
+<div class="section" id="tab-posicoes">
+  <div class="pos-section">
+    <div class="page-header">
+      <div class="page-title">Posições abertas</div>
+      <div style="display:flex;gap:7px;">
+        <button class="btn btn-sm btn-success" onclick="openModal('modal-txn')">+ Transação</button>
+        <button class="btn btn-sm" onclick="refreshQuotes()">↻ Cotações</button>
+      </div>
+    </div>
+    <div class="filter-bar">
+      <button class="filter-btn active" onclick="filterPos('all','all',this)">Todas</button>
+      <button class="filter-btn" onclick="filterPos('Ação','all',this)">Ações</button>
+      <button class="filter-btn" onclick="filterPos('ETF','all',this)">ETFs</button>
+      <button class="filter-btn" onclick="filterPos('Cripto','all',this)">Cripto</button>
+      <button class="filter-btn" onclick="filterPos('CFD','all',this)">CFD</button>
+      <span style="color:var(--color-border-secondary);margin:0 2px;">|</span>
+      <div id="broker-filter-btns" style="display:flex;gap:4px;flex-wrap:wrap;"></div>
+    </div>
+    <div class="table-card">
+      <!-- Totals bar -->
+      <div id="pos-totals" style="padding:10px 14px;background:var(--color-background-secondary);border-bottom:0.5px solid var(--color-border-tertiary);display:flex;gap:20px;flex-wrap:wrap;align-items:center;">
+        <div style="font-size:10px;font-weight:500;color:var(--color-text-secondary);text-transform:uppercase;letter-spacing:0.05em;white-space:nowrap;">Subtotal</div>
+        <div style="display:flex;gap:18px;flex-wrap:wrap;flex:1;">
+          <div><span style="font-size:10px;color:var(--color-text-secondary);">Custo </span><span id="pt-cost" style="font-size:13px;font-weight:500;color:var(--color-text-primary);">€0</span></div>
+          <div><span style="font-size:10px;color:var(--color-text-secondary);">Mercado </span><span id="pt-mkt" style="font-size:13px;font-weight:500;color:var(--color-text-primary);">—</span></div>
+          <div><span style="font-size:10px;color:var(--color-text-secondary);">P&amp;L </span><span id="pt-pl" style="font-size:13px;font-weight:500;">—</span></div>
+          <div><span style="font-size:10px;color:var(--color-text-secondary);">% </span><span id="pt-plpct" style="font-size:13px;font-weight:500;">—</span></div>
+        </div>
+        <div style="font-size:11px;color:var(--color-text-secondary);" id="pt-n">0 posições</div>
+      </div>
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>Produto</th><th>ISIN</th><th>Tipo</th><th>Corretora</th><th class="num">Qtd</th><th class="num">Custo méd €</th><th class="num">Custo total €</th><th class="num">Cotação €</th><th class="num">Valor atual €</th><th class="num">P&amp;L €</th><th class="num">P&amp;L %</th></tr></thead>
+        <tbody id="pos-body"><tr><td colspan="11"><div class="empty-state"><div class="empty-icon">📊</div><div class="empty-title">Sem posições</div></div></td></tr></tbody>
+      </table>
+    </div></div>
+    <div id="pos-count" style="font-size:11px;color:var(--color-text-secondary);padding:6px 2px;"></div>
+  </div>
+</div>
+
+<!-- TRANSAÇÕES -->
+<div class="section" id="tab-transacoes">
+  <div class="pos-section">
+    <div class="page-header">
+      <div class="page-title">Histórico de transações</div>
+      <div style="display:flex;gap:7px;flex-wrap:wrap;">
+        <button class="btn btn-sm btn-success" onclick="openModal('modal-txn')">+ Transação</button>
+        <select id="txn-broker" onchange="renderTransactions()"><option value="all">Todas as corretoras</option></select>
+        <select id="txn-type" onchange="renderTransactions()"><option value="all">Todos</option><option value="BUY">Compra</option><option value="SELL">Venda</option><option value="DIV">Dividendo</option></select>
+        <select id="txn-year" onchange="renderTransactions()"><option value="all">Todos os anos</option></select>
+      </div>
+    </div>
+    <div class="table-card"><div class="table-wrap">
+      <table>
+        <thead><tr><th>Data</th><th>Produto</th><th>Tipo</th><th>Corretora</th><th class="num">Qtd</th><th class="num">Preço €</th><th class="num">Total €</th><th class="num">Custos €</th><th></th></tr></thead>
+        <tbody id="txn-body"></tbody>
+      </table>
+    </div></div>
+    <div id="txn-count" style="font-size:11px;color:var(--color-text-secondary);padding:6px 2px;"></div>
+  </div>
+</div>
+
+<!-- CUSTOS -->
+<div class="section" id="tab-custos">
+  <div class="pos-section">
+    <div class="page-header"><div class="page-title">Custos com corretoras</div>
+      <div style="display:flex;gap:7px;"><select id="cost-year" onchange="renderCustos()"><option value="all">Todos os anos</option></select><select id="cost-broker" onchange="renderCustos()"><option value="all">Todas</option></select></div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:16px;">
+      <div class="kpi"><div class="kpi-label">Comissões</div><div class="kpi-value neg" id="c-comissoes">€0</div></div>
+      <div class="kpi"><div class="kpi-label">Conectividade</div><div class="kpi-value neg" id="c-conn">€0</div></div>
+      <div class="kpi"><div class="kpi-label">Ret. na fonte</div><div class="kpi-value neg" id="c-wht">€0</div></div>
+      <div class="kpi"><div class="kpi-label">Total</div><div class="kpi-value neg" id="c-total">€0</div></div>
+    </div>
+    <div class="table-card"><div class="table-wrap"><table><thead><tr><th>Data</th><th>Produto</th><th>Corretora</th><th>Tipo</th><th class="num">Valor €</th></tr></thead><tbody id="cost-body"></tbody></table></div></div>
+  </div>
+</div>
+
+<!-- IMPORTAR -->
+<div class="section" id="tab-importar">
+  <div class="import-section">
+    <div class="page-header"><div class="page-title">Importar ficheiro</div></div>
+    <div class="broker-grid">
+      <div class="broker-card selected" data-broker="DEGIRO" onclick="selectBroker(this)">
+        <div class="bc-icon" style="background:#FF6600;">DG</div>
+        <div class="bc-name">DEGIRO</div>
+        <div class="bc-hint">2 ficheiros CSV:<br>① Actividade → Transações → Exportar<br>② Inbox → Account Statement → Export</div>
+      </div>
+      <div class="broker-card" data-broker="XTB" onclick="selectBroker(this)">
+        <div class="bc-icon" style="background:#E30613;">XTB</div>
+        <div class="bc-name">XTB</div>
+        <div class="bc-hint">XLSX — Histórico → Relatório de conta → Exportar para Excel<br><em style="color:var(--accent-dark);">Nota: XTB PT comunica com AT automaticamente</em></div>
+      </div>
+      <div class="broker-card" data-broker="ETORO" onclick="selectBroker(this)">
+        <div class="bc-icon" style="background:#00C853;">eT</div>
+        <div class="bc-name">eToro</div>
+        <div class="bc-hint">XLSX — Portfólio → ⚙ Definições → Extrato de conta → datas desde abertura até hoje</div>
+      </div>
+      <div class="broker-card" data-broker="IBKR" onclick="selectBroker(this)">
+        <div class="bc-icon" style="background:#003087;">IB</div>
+        <div class="bc-name">IBKR</div>
+        <div class="bc-hint">CSV PT — Desempenho e relatórios → Relatórios → Histórico de transações → Exportar CSV (idioma: Português)</div>
+      </div>
+      <div class="broker-card" data-broker="FREEDOM24" onclick="selectBroker(this)">
+        <div class="bc-icon" style="background:#0057B8;">F24</div>
+        <div class="bc-name">Freedom24</div>
+        <div class="bc-hint">CSV Manual — extrai do PDF do broker report ou usa o CSV gerado pelo assistente</div>
+      </div>
+      <div class="broker-card" data-broker="MANUAL" onclick="selectBroker(this)">
+        <div class="bc-icon" style="background:#888;">✎</div>
+        <div class="bc-name">Manual / CSV</div>
+        <div class="bc-hint">Colunas: date, ticker, type (BUY/SELL/DIV), qty, price, broker, commission, wht</div>
+      </div>
+    </div>
+    <div class="degiro-uploads visible" id="degiro-uploads">
+      <div style="font-size:12px;font-weight:500;color:var(--color-text-primary);">DEGIRO — carrega os dois ficheiros (ou só um):</div>
+      <div class="upload-row"><div class="upload-label">📋 Transações</div><input type="file" id="degiro-txn-file" accept=".csv" onchange="handleDEGIROFile('txn',this)" style="font-size:12px;flex:1;"><div class="upload-status" id="degiro-txn-status">—</div></div>
+      <div class="upload-row"><div class="upload-label">💰 Extrato conta</div><input type="file" id="degiro-acc-file" accept=".csv" onchange="handleDEGIROFile('acc',this)" style="font-size:12px;flex:1;"><div class="upload-status" id="degiro-acc-status">—</div></div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:6px;">
+        <button class="btn btn-sm" onclick="cancelImport()">Cancelar</button>
+        <button class="btn btn-sm btn-primary" id="degiro-import-btn" disabled onclick="confirmDEGIROImport()">✓ Importar DEGIRO</button>
+      </div>
+    </div>
+    <div class="drop-zone" id="drop-zone" style="display:none;"
+      ondragover="event.preventDefault();this.classList.add('dragover')"
+      ondragleave="this.classList.remove('dragover')"
+      ondrop="handleDrop(event)">
+      <div style="font-size:22px;margin-bottom:6px;">📂</div>
+      <div style="font-size:13px;font-weight:500;color:var(--color-text-primary);margin-bottom:6px;">Arrastar ficheiro aqui ou selecionar</div>
+      <input type="file" id="file-input" accept=".csv,.txt,.xlsx,.xls" style="display:block;margin:0 auto;font-size:12px;" onchange="handleFile(this)">
+    </div>
+    <div id="import-preview" style="display:none;">
+      <div class="preview-box">
+        <div class="preview-header"><div style="font-size:13px;font-weight:500;" id="preview-title">Pré-visualização</div><span id="preview-badge" class="badge badge-blue"></span></div>
+        <div class="preview-scroll"><div style="overflow-x:auto;"><table id="preview-table"></table></div></div>
+      </div>
+      <div class="import-log" id="import-log"></div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;">
+        <button class="btn" id="btn-cancel">Cancelar</button>
+        <button class="btn btn-primary" id="btn-confirm">✓ Importar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- FISCAL -->
+<div class="section" id="tab-fiscal">
+  <div class="fiscal-section">
+    <div class="page-header">
+      <div class="page-title">Relatório Fiscal — IRS Portugal</div>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <select id="fiscal-year" onchange="renderFiscal()"><option value="2026">2026</option><option value="2025" selected>2025</option><option value="2024">2024</option><option value="2023">2023</option><option value="2022">2022</option></select>
+        <button class="btn btn-sm" onclick="exportFiscalCSV()">⬇ Exportar CSV</button>
+      </div>
+    </div>
+    <div class="alert alert-info">ℹ️ Método FIFO por ISIN+corretora. Comissões incluídas no custo. Consulta um contabilista para o IRS final.</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:14px;">
+      <div class="kpi"><div class="kpi-label">Mais-valias (Ações/ETF)</div><div class="kpi-value" id="f-mv-ac">€0</div></div>
+      <div class="kpi"><div class="kpi-label">Mais-valias (Cripto)</div><div class="kpi-value" id="f-mv-cr">€0</div></div>
+      <div class="kpi"><div class="kpi-label">Imposto estimado (28%)</div><div class="kpi-value" id="f-tax">€0</div></div>
+      <div class="kpi"><div class="kpi-label">Dividendos tributáveis</div><div class="kpi-value" id="f-div">€0</div></div>
+      <div class="kpi"><div class="kpi-label">Ret. fonte deduzível</div><div class="kpi-value" id="f-wht">€0</div></div>
+    </div>
+    <div class="fiscal-tabs">
+      <button class="ftab active" onclick="switchFiscalTab('mv',this)">Mais-valias (FIFO)</button>
+      <button class="ftab" onclick="switchFiscalTab('div',this)">Dividendos</button>
+      <button class="ftab" onclick="switchFiscalTab('anexoj',this)">Notas Anexo J</button>
+    </div>
+    <div id="fiscal-mv" class="table-card"><div class="table-wrap"><table><thead><tr><th>Produto</th><th>Tipo</th><th>Data compra</th><th>Data venda</th><th class="num">Qtd</th><th class="num">Custo FIFO €</th><th class="num">Realizado €</th><th class="num">Mais-valia €</th><th>Regime</th></tr></thead><tbody id="fiscal-mv-body"><tr><td colspan="9"><div class="empty-state"><div class="empty-title">Sem vendas neste ano</div></div></td></tr></tbody></table></div></div>
+    <div id="fiscal-div" style="display:none;" class="table-card"><div class="table-wrap"><table><thead><tr><th>Produto</th><th>Data</th><th>Corretora</th><th class="num">Bruto €</th><th class="num">Ret. fonte €</th><th class="num">Líquido €</th></tr></thead><tbody id="fiscal-div-body"></tbody></table></div></div>
+    <div id="fiscal-anexoj" style="display:none;background:var(--color-background-primary);border:0.5px solid var(--color-border-tertiary);border-radius:var(--radius);padding:16px;">
+      <div style="font-size:10px;font-weight:500;color:var(--color-text-secondary);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:12px;">Guia para o Anexo J</div>
+      <div class="alert alert-warn">⚠️ Obrigatório para DEGIRO (NL), eToro (CY), XTB (PL), IBKR (US/IE), Freedom24 (CY/KZ)</div>
+      <div style="font-size:13px;color:var(--color-text-secondary);line-height:1.8;display:flex;flex-direction:column;gap:10px;">
+        <div><strong style="color:var(--color-text-primary);">Quadro 8.2</strong> — Dividendos: valores brutos, retenção deduzível por país de origem.</div>
+        <div><strong style="color:var(--color-text-primary);">Quadro 9.2</strong> — Mais-valias: valor realização, custo FIFO + comissões, datas abertura/fecho.</div>
+        <div><strong style="color:var(--color-text-primary);">Cripto</strong> — &lt;365 dias: 28% Anexo G. ≥365 dias: <span class="badge badge-green">Isento</span></div>
+        <div><strong style="color:var(--color-text-primary);">CFDs</strong> — Rendimento de categoria E (rendimentos de capitais), não mais-valias.</div>
+        <div><strong style="color:var(--color-text-primary);">ETFs fora UE/EEE</strong> — 28% autónomo, sem englobamento.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+</div></div>
+
+<!-- MODAL: Nova Transação -->
+<div class="modal-overlay" id="modal-txn">
+  <div class="modal">
+    <div class="modal-title">➕ Nova Transação</div>
+    <div class="type-tabs">
+      <button class="type-tab active-buy" id="ttab-buy" onclick="setTxnType('BUY')">Compra</button>
+      <button class="type-tab" id="ttab-sell" onclick="setTxnType('SELL')">Venda</button>
+      <button class="type-tab" id="ttab-div" onclick="setTxnType('DIV')">Dividendo</button>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Data</label><input type="date" id="txn-date" value=""></div>
+      <div class="field"><label>Corretora</label>
+        <select id="txn-broker-sel">
+          <option value="DEGIRO">DEGIRO</option>
+          <option value="XTB">XTB</option>
+          <option value="eToro">eToro</option>
+          <option value="IBKR">IBKR</option>
+          <option value="Freedom24">Freedom24</option>
+          <option value="Manual">Manual</option>
+        </select>
+      </div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Ticker</label><input type="text" id="txn-ticker" placeholder="ex: AAPL, SXR8, BTC"></div>
+      <div class="field"><label>Nome / Produto</label><input type="text" id="txn-product" placeholder="ex: Apple Inc."></div>
+    </div>
+    <div class="field"><label>ISIN (opcional)</label><input type="text" id="txn-isin" placeholder="ex: US0378331005"></div>
+    <div class="field-row">
+      <div class="field"><label>Quantidade</label><input type="number" id="txn-qty" placeholder="ex: 10" step="any" min="0"></div>
+      <div class="field"><label>Preço unitário (€)</label><input type="number" id="txn-price" placeholder="ex: 185.50" step="any" min="0"></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Comissão / custo (€)</label><input type="number" id="txn-comm" placeholder="ex: 2.50" step="any" min="0" value="0"></div>
+      <div class="field" id="wht-field" style="display:none;"><label>Retenção na fonte (€)</label><input type="number" id="txn-wht" placeholder="ex: 1.50" step="any" min="0" value="0"></div>
+    </div>
+    <div class="field"><label>Tipo de ativo</label>
+      <select id="txn-asset-type">
+        <option value="Ação">Ação</option>
+        <option value="ETF">ETF</option>
+        <option value="Cripto">Cripto</option>
+        <option value="CFD">CFD</option>
+      </select>
+    </div>
+    <div id="txn-preview" style="font-size:12px;color:var(--color-text-secondary);background:var(--color-background-secondary);padding:8px 10px;border-radius:var(--radius-sm);margin-top:4px;"></div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeModal('modal-txn')">Cancelar</button>
+      <button class="btn btn-primary" onclick="addManualTxn()">✓ Adicionar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: Import Summary -->
+<div class="modal-overlay" id="modal-summary">
+  <div class="modal" style="width:min(540px,100%);">
+    <div class="modal-title" id="summary-title">📋 Resumo da importação</div>
+    <div id="summary-period" style="font-size:12px;color:var(--color-text-secondary);margin-bottom:14px;padding:8px 12px;background:var(--color-background-secondary);border-radius:var(--radius-sm);display:flex;align-items:center;gap:8px;">
+      <span>📅</span><span id="summary-period-text">—</span>
+    </div>
+    <!-- Stats grid -->
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:16px;">
+      <div style="background:var(--accent-light);border-radius:var(--radius-sm);padding:10px;text-align:center;">
+        <div style="font-size:22px;font-weight:300;color:var(--accent-dark);" id="sum-buys">0</div>
+        <div style="font-size:10px;color:var(--accent-dark);text-transform:uppercase;letter-spacing:0.05em;">Compras</div>
+      </div>
+      <div style="background:var(--red-light);border-radius:var(--radius-sm);padding:10px;text-align:center;">
+        <div style="font-size:22px;font-weight:300;color:var(--red);" id="sum-sells">0</div>
+        <div style="font-size:10px;color:var(--red);text-transform:uppercase;letter-spacing:0.05em;">Vendas</div>
+      </div>
+      <div style="background:var(--blue-light);border-radius:var(--radius-sm);padding:10px;text-align:center;">
+        <div style="font-size:22px;font-weight:300;color:var(--blue);" id="sum-divs">0</div>
+        <div style="font-size:10px;color:var(--blue);text-transform:uppercase;letter-spacing:0.05em;">Dividendos</div>
+      </div>
+      <div style="background:var(--amber-light);border-radius:var(--radius-sm);padding:10px;text-align:center;">
+        <div style="font-size:22px;font-weight:300;color:var(--amber);" id="sum-fees">0</div>
+        <div style="font-size:10px;color:var(--amber);text-transform:uppercase;letter-spacing:0.05em;">Custos</div>
+      </div>
+    </div>
+    <!-- Financials -->
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:16px;">
+      <div style="padding:10px;background:var(--color-background-secondary);border-radius:var(--radius-sm);">
+        <div style="font-size:10px;color:var(--color-text-secondary);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">Volume compras</div>
+        <div style="font-size:15px;font-weight:400;color:var(--color-text-primary);" id="sum-buy-vol">€0</div>
+      </div>
+      <div style="padding:10px;background:var(--color-background-secondary);border-radius:var(--radius-sm);">
+        <div style="font-size:10px;color:var(--color-text-secondary);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">Total dividendos</div>
+        <div style="font-size:15px;font-weight:400;color:var(--accent-dark);" id="sum-div-total">€0</div>
+      </div>
+      <div style="padding:10px;background:var(--color-background-secondary);border-radius:var(--radius-sm);">
+        <div style="font-size:10px;color:var(--color-text-secondary);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">Ret. na fonte</div>
+        <div style="font-size:15px;font-weight:400;color:var(--red);" id="sum-wht-total">€0</div>
+      </div>
+    </div>
+    <!-- Tickers found -->
+    <div style="margin-bottom:14px;">
+      <div style="font-size:10px;font-weight:500;color:var(--color-text-secondary);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:8px;">Ativos detetados</div>
+      <div id="sum-tickers" style="display:flex;flex-wrap:wrap;gap:5px;"></div>
+    </div>
+    <!-- Warnings -->
+    <div id="sum-warnings" style="display:none;margin-bottom:14px;"></div>
+    <!-- Log -->
+    <div id="sum-log" style="font-size:11px;font-family:monospace;background:var(--color-background-secondary);padding:8px 10px;border-radius:var(--radius-sm);max-height:80px;overflow-y:auto;white-space:pre;color:var(--color-text-secondary);margin-bottom:14px;"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;">
+      <button class="btn" onclick="closeModal('modal-summary');cancelImport();">Cancelar</button>
+      <button class="btn btn-primary" id="sum-confirm-btn" onclick="closeModal('modal-summary');confirmImport();">✓ Importar tudo</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: Backup -->
+<div class="modal-overlay" id="modal-backup">
+  <div class="modal"><div class="modal-title">⬇ Exportar backup</div>
+    <div class="field"><label>Password AES-256</label><input type="password" id="backup-pw" placeholder="Mínimo 8 caracteres" oninput="updatePwStrength(this.value)"><div class="pw-bar"><div class="pw-seg" id="ps1"></div><div class="pw-seg" id="ps2"></div><div class="pw-seg" id="ps3"></div><div class="pw-seg" id="ps4"></div></div><div style="font-size:11px;color:var(--color-text-secondary);margin-top:4px;">Sem esta password os dados são irrecuperáveis.</div></div>
+    <div class="field"><label style="display:flex;align-items:center;gap:7px;cursor:pointer;"><input type="checkbox" id="backup-noenc"> Exportar sem encriptação (JSON legível)</label></div>
+    <div class="modal-footer"><button class="btn" onclick="closeModal('modal-backup')">Cancelar</button><button class="btn btn-primary" onclick="doBackup()">Descarregar .ptbak</button></div>
+  </div>
+</div>
+
+<!-- MODAL: Restore -->
+<div class="modal-overlay" id="modal-restore">
+  <div class="modal"><div class="modal-title">⬆ Restaurar backup</div>
+    <div class="alert alert-warn">⚠️ Isto substituirá todos os dados atuais!</div>
+    <div style="margin-bottom:10px;"><input type="file" id="restore-file" accept=".ptbak,.json" style="font-size:12px;" onchange="handleRestoreFile(this)"></div>
+    <div class="field" id="restore-pw-row" style="display:none;"><label>Password</label><input type="password" id="restore-pw" placeholder="Password do backup"></div>
+    <div id="restore-status" style="font-size:12px;color:var(--color-text-secondary);margin-top:4px;"></div>
+    <div class="modal-footer"><button class="btn" onclick="closeModal('modal-restore')">Cancelar</button><button class="btn btn-primary" id="restore-btn" onclick="doRestore()" disabled>Restaurar</button></div>
+  </div>
+</div>
+
+<div class="notif" id="notif"></div>
+
+<script src="parsers.js"></script>
+<script src="fiscal.js"></script>
+<script src="cotacoes.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
