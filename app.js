@@ -82,12 +82,14 @@ function confirmDEGIROImport(){
     const b=window.PT.degiro.txnParsed.filter(t=>t.type==='BUY').length;
     const s=window.PT.degiro.txnParsed.filter(t=>t.type==='SELL').length;
     log.push(`[Transações] ${b} compras | ${s} vendas`);
+    log.push(...(parseDEGIRO_TXN.lastLog||[]));
   }
   if(window.PT.degiro.accParsed){
     const divs=window.PT.degiro.accParsed.filter(t=>t.type==='DIV').length;
     const fees=window.PT.degiro.accParsed.filter(t=>t.type==='FEE').length;
     const wht=window.PT.degiro.accParsed.filter(t=>t.type==='DIV').reduce((s,t)=>s+(t.wht||0),0);
     log.push(`[Extrato] ${divs} dividendos | ${fees} taxas conectividade | WHT €${wht.toFixed(2)}`);
+    log.push(...(parseDEGIRO_ACC.lastLog||[]));
   }
 
   // Guardar callback de confirmação para depois do modal
@@ -189,7 +191,8 @@ function confirmImport(){
   const pending=window.PT.pending;if(!pending||!pending.length){notify('Nada para importar');return;}
   // Re-importação: o ficheiro novo substitui as transações dessa corretora no período que cobre (evita duplicados de versões antigas do parser)
   const brokers=[...new Set(pending.map(t=>t.broker))];const dates=pending.map(t=>t.date).sort();const d0=dates[0],d1=dates[dates.length-1];
-  const kept=window.PT.transactions.filter(t=>!(brokers.includes(t.broker)&&t.broker!=='Manual'&&t.date>=d0&&t.date<=d1));
+  const pTypes=[...new Set(pending.map(t=>t.type))];
+  const kept=window.PT.transactions.filter(t=>!(brokers.includes(t.broker)&&t.broker!=='Manual'&&pTypes.includes(t.type)&&t.date>=d0&&t.date<=d1));
   const removed=window.PT.transactions.length-kept.length;
   const key=t=>`${t.broker}|${t.date}|${t.isin||t.ticker}|${t.type}|${Number(t.qty).toFixed(4)}|${Number(t.total||0).toFixed(2)}`;const existing=new Set(kept.map(key));const newT=pending.filter(t=>!existing.has(key(t)));
   if(removed)console.log(`[Import] ${removed} transações antigas de ${brokers.join(',')} (${d0} a ${d1}) substituídas`);

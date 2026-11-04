@@ -18,40 +18,73 @@ function parseCSVLine(l){const r=[];let c='',q=false;for(let i=0;i<l.length;i++)
 
 // ── PARSERS ───────────────────────────────────────────────────────────────────
 function parseDEGIRO_TXN(text){
-  const txns=[];const rows=text.trim().split('\n').map(parseCSVLine);const headers=rows[0].map(h=>h.toLowerCase().trim().replace(/^"|"$/g,''));
-  rows.slice(1).forEach(row=>{
-    const bi=i=>row[i]!==undefined?String(row[i]).replace(/^"|"$/g,'').trim():'';
-    const bn=(...ns)=>{for(const n of ns){const i=headers.indexOf(n);if(i>=0&&row[i]!==undefined&&String(row[i]).trim()!='')return String(row[i]).replace(/^"|"$/g,'').trim();}return '';};
-    const date=bn('data','date')||bi(0),product=bn('produto','product')||bi(2),isin=bn('isin')||bi(3);if(!product&&!isin)return;
-    const qn=pn(bi(6)||bn('quantidade','quantity')),qty=Math.abs(qn);
-    const price=Math.abs(pn(bi(7)||bn('preços','price')));
-    const autofx=Math.abs(pn(bi(13))),costs=Math.abs(pn(bi(14))),totalEUR=Math.abs(pn(bi(15)||bn('total eur','total')));
-    if(qty===0&&totalEUR===0)return;
-    const type=qn<0?'SELL':'BUY',assetType=ga(product,isin),ticker=tk(isin,product);
-    const ep=price>0?price:(qty>0?(totalEUR-costs)/qty:0);
-    txns.push({date:nd(date),ticker,product,isin:isin||'',type,qty,price:Math.abs(ep),total:Math.abs(qty>0?qty*ep:totalEUR-costs),currency:'EUR',broker:'DEGIRO',assetType,commission:costs,autofx,totalCost:costs+autofx,wht:0});
+  // Transactions.csv — colunas fixas: 0 Data,2 Produto,3 ISIN,6 Qtd,7 Preço,9 Valor local,11 Valor EUR,13 Autofx,14 Custos,15 Total EUR,16 ID Ordem
+  const txns=[],log=[];
+  const rows=text.replace(/^﻿/,'').trim().split(/\r?\n/).map(parseCSVLine).slice(1).filter(r=>r.length>=16&&(r[3]||r[2]));
+  const orders={},noId=[];
+  rows.forEach(r=>{
+    const q=pn(r[6]);if(!q)return;
+    const o={date:nd(r[0]),product:r[2],isin:r[3],qty:q,eur:pn(r[11]),autofx:pn(r[13]),costs:pn(r[14]),id:(r[16]||'').trim()};
+    if(!o.id){noId.push(o);return;}
+    const k=o.id+'|'+o.date;
+    if(!orders[k])orders[k]={...o,qty:0,eur:0,autofx:0,costs:0};
+    const g=orders[k];g.qty+=o.qty;g.eur+=o.eur;g.autofx+=o.autofx;g.costs+=o.costs;
   });
+  Object.values(orders).forEach(g=>{
+    const qty=Math.abs(g.qty),total=Math.abs(g.eur),fee=Math.abs(g.costs)+Math.abs(g.autofx);
+    txns.push({date:g.date,ticker:tk(g.isin,g.product),product:g.product,isin:g.isin,type:g.qty<0?'SELL':'BUY',qty,price:total/qty,total,
+      currency:'EUR',broker:'DEGIRO',assetType:ga(g.product,g.isin),commission:Math.abs(g.costs),autofx:Math.abs(g.autofx),totalCost:fee,wht:0});
+  });
+  // Linhas sem ID de ordem = eventos corporativos. Split: +N e −M no mesmo dia/ISIN com o mesmo valor → rácio N/M nos lotes anteriores
+  const byKey={};noId.forEach(o=>{const k=o.isin+'|'+o.date;(byKey[k]=byKey[k]||[]).push(o);});
+  Object.values(byKey).forEach(list=>{
+    const plus=list.find(o=>o.qty>0),minus=list.find(o=>o.qty<0);
+    if(list.length===2&&plus&&minus&&Math.abs(plus.eur+minus.eur)<0.05){
+      const ratio=plus.qty/Math.abs(minus.qty);
+      txns.filter(t=>t.isin===plus.isin&&t.date<plus.date).forEach(t=>{t.qty*=ratio;t.price/=ratio;});
+      log.push(`[INFO] Split ${plus.product} ${plus.date}: ${Math.abs(minus.qty)} → ${plus.qty} (×${ratio}) aplicado às compras anteriores`);
+    }else list.forEach(o=>log.push(`[AVISO] Linha sem ID de ordem ignorada: ${o.product} ${o.date} qtd ${o.qty}`));
+  });
+  txns.sort((a,b)=>a.date.localeCompare(b.date));
+  parseDEGIRO_TXN.lastLog=log;
   return txns;
 }
 
 function parseDEGIRO_ACC(text){
-  const txns=[];const rows=text.trim().split('\n').map(parseCSVLine).slice(1);
-  const fxByDate={};
-  for(let i=0;i<rows.length-1;i++){const r=rows[i],next=rows[i+1];if(r[5]==='Crédito de divisa'&&r[7]==='EUR'&&next&&next[5]==='Levantamento de divisa'&&next[7]==='USD'){const ea=Math.abs(pn(r[8])),ua=Math.abs(pn(next[8]));if(ea>0&&ua>0)fxByDate[nd(r[0])]=ua/ea;}}
-  const divMap={};
+  // Account.csv — 0 Data,2 Data Valor,3 Produto,4 ISIN,5 Descrição,6 Taxa câmbio,7 Moeda,8 Valor
+  const txns=[],log=[];
+  const rows=text.replace(/^﻿/,'').trim().split(/\r?\n/).map(parseCSVLine).slice(1);
+  const parseD=s=>nd(s);
+  // Câmbios: cada conversão automática USD→EUR tem a taxa na linha "Levantamento de divisa" (USD por 1 EUR)
+  const fx=rows.filter(r=>r[5]==='Levantamento de divisa'&&r[7]==='USD'&&pn(r[6])>0).map(r=>({date:parseD(r[0]),rate:pn(r[6])})).sort((a,b)=>a.date.localeCompare(b.date));
+  const rateFor=d=>{const f=fx.find(x=>x.date>=d);if(f)return f.rate;return fx.length?fx[fx.length-1].rate:1.1;};
+  // Dividendos: agrupar pelo evento (ISIN + Data Valor) para que correções/reclassificações posteriores
+  // se anulem com o original. A data registada é a "Data" da primeira linha (dinheiro recebido).
+  const ev={},capRet={},isDiv=d=>d==='Dividendo'||d==='QIE Distribution Capital Gain',isTax=d=>d==='Imposto sobre dividendo'||d==='QIE Distribution Capital Gain Tax';
+  let reclass=0;
   rows.forEach(r=>{
-    if(!r[5])return;const desc=r[5].trim(),date=nd(r[0]),produto=r[3]||'',isin=r[4]||'',moeda=r[7]||'EUR',valor=pn(r[8]);const key=`${isin||produto}|${date}`;
-    if(desc==='Dividendo'){if(!divMap[key])divMap[key]={produto,isin,date,divUSD:0,divEUR:0,whtUSD:0,whtEUR:0};if(moeda==='EUR')divMap[key].divEUR+=valor;else divMap[key].divUSD+=valor;}
-    else if(desc==='Imposto sobre dividendo'||desc.startsWith('QIE')){if(!divMap[key])divMap[key]={produto,isin,date,divUSD:0,divEUR:0,whtUSD:0,whtEUR:0};if(moeda==='EUR')divMap[key].whtEUR+=Math.abs(valor);else divMap[key].whtUSD+=Math.abs(valor);}
-    else if(desc.includes('Custo de Conectividade')||desc.includes('Taxa de Conectividade')){txns.push({date,ticker:'DEGIRO',product:desc.substring(0,40),isin:'',type:'FEE',qty:0,price:0,total:0,currency:'EUR',broker:'DEGIRO',assetType:'Ação',commission:Math.abs(valor),autofx:0,totalCost:Math.abs(valor),wht:0});}
+    const desc=(r[5]||'').trim();if(!desc)return;
+    const date=parseD(r[0]),cur=r[7]||'EUR',val=pn(r[8]);
+    if(isDiv(desc)||isTax(desc)){
+      const k=(r[4]||r[3])+'|'+parseD(r[2]);
+      if(!ev[k])ev[k]={product:r[3],isin:r[4],date,cur,div:0,tax:0,rows:0};
+      const e=ev[k];if(date<e.date)e.date=date;e.rows++;
+      if(isDiv(desc)){e.div+=val;if(val<0)reclass++;}else e.tax+=val;
+    }else if(desc==='Capital Return'){
+      const y=date.substring(0,4);capRet[y]=(capRet[y]||0)+val/(cur==='EUR'?1:rateFor(date));
+    }else if(/Custo de Conectividade|Taxa de Conectividade/.test(desc)){
+      txns.push({date,ticker:'DEGIRO',product:desc.substring(0,60),isin:'',type:'FEE',qty:0,price:0,total:0,currency:'EUR',broker:'DEGIRO',assetType:'Ação',commission:Math.abs(val),autofx:0,totalCost:Math.abs(val),wht:0});
+    }
   });
-  const sorted=Object.keys(fxByDate).sort();
-  Object.values(divMap).forEach(d=>{
-    let rate=fxByDate[d.date];
-    if(!rate&&sorted.length>0){const cl=sorted.reduce((p,c)=>Math.abs(new Date(c)-new Date(d.date))<Math.abs(new Date(p)-new Date(d.date))?c:p,sorted[0]);rate=fxByDate[cl]||1.1;}
-    rate=rate||1.1;const divEUR=d.divEUR>0?d.divEUR:(d.divUSD>0?d.divUSD/rate:0);const whtEUR=d.whtEUR>0?d.whtEUR:(d.whtUSD>0?d.whtUSD/rate:0);const gross=divEUR+whtEUR;
-    if(gross>0.001){const ticker2=tk(d.isin,d.produto);txns.push({date:d.date,ticker:ticker2,product:d.produto,isin:d.isin,type:'DIV',qty:1,price:gross,total:gross,currency:'EUR',broker:'DEGIRO',assetType:ga(d.produto,d.isin),commission:0,autofx:0,totalCost:0,wht:whtEUR});}
+  Object.values(ev).forEach(e=>{
+    if(e.div<=0.005){if(Math.abs(e.div)>0.005||Math.abs(e.tax)>0.005)log.push(`[AVISO] Evento ${e.product} ${e.date}: dividendo líquido ${e.div.toFixed(2)} ${e.cur}, retenção ${e.tax.toFixed(2)} — ignorado`);return;}
+    const rate=e.cur==='EUR'?1:rateFor(e.date),gross=e.div/rate,wht=Math.max(0,-e.tax)/rate;
+    txns.push({date:e.date,ticker:tk(e.isin,e.product),product:e.product,isin:e.isin,type:'DIV',qty:1,price:gross,total:gross,currency:'EUR',broker:'DEGIRO',
+      assetType:ga(e.product,e.isin),commission:0,autofx:0,totalCost:0,wht,fx:rate});
   });
+  if(reclass)log.push(`[INFO] ${reclass} estornos/reclassificações de dividendos acertados no evento original`);
+  Object.entries(capRet).sort().forEach(([y,v])=>log.push(`[INFO] Capital Return ${y}: €${v.toFixed(2)} (devolução de capital — não conta como dividendo)`));
+  parseDEGIRO_ACC.lastLog=log;
   return txns;
 }
 
