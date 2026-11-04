@@ -187,8 +187,13 @@ function showPreview(filename,transactions,brokerLabel,log){
 function cancelImport(){document.getElementById('import-preview').style.display='none';window.PT.pending=null;}
 function confirmImport(){
   const pending=window.PT.pending;if(!pending||!pending.length){notify('Nada para importar');return;}
-  const key=t=>`${t.date}|${t.isin||t.ticker}|${t.type}|${Number(t.qty).toFixed(4)}|${Number(t.price).toFixed(4)}`;const existing=new Set(window.PT.transactions.map(key));const newT=pending.filter(t=>!existing.has(key(t)));
-  window.PT.transactions=[...window.PT.transactions,...newT].sort((a,b)=>new Date(a.date)-new Date(b.date));window.PT.pending=null;computePositions();updateFilters();
+  // Re-importação: o ficheiro novo substitui as transações dessa corretora no período que cobre (evita duplicados de versões antigas do parser)
+  const brokers=[...new Set(pending.map(t=>t.broker))];const dates=pending.map(t=>t.date).sort();const d0=dates[0],d1=dates[dates.length-1];
+  const kept=window.PT.transactions.filter(t=>!(brokers.includes(t.broker)&&t.broker!=='Manual'&&t.date>=d0&&t.date<=d1));
+  const removed=window.PT.transactions.length-kept.length;
+  const key=t=>`${t.broker}|${t.date}|${t.isin||t.ticker}|${t.type}|${Number(t.qty).toFixed(4)}|${Number(t.total||0).toFixed(2)}`;const existing=new Set(kept.map(key));const newT=pending.filter(t=>!existing.has(key(t)));
+  if(removed)console.log(`[Import] ${removed} transações antigas de ${brokers.join(',')} (${d0} a ${d1}) substituídas`);
+  window.PT.transactions=[...kept,...newT].sort((a,b)=>new Date(a.date)-new Date(b.date));window.PT.pending=null;computePositions();updateFilters();
   const types={BUY:0,SELL:0,DIV:0,FEE:0};newT.forEach(t=>types[t.type]=(types[t.type]||0)+1);
   notify(`✓ ${newT.length} importadas (${types.BUY}↑ ${types.SELL}↓ ${types.DIV} div) · ${window.PT.transactions.length} total`);
   setTimeout(()=>switchTab('posicoes',document.querySelectorAll('.nav-btn')[1]),800);

@@ -131,88 +131,105 @@ function parseETORO_XLSX(wb){
 }
 
 function parseXTB_XLSX(wb){
+  // XTB: usa as 3 folhas. Cash Operations = valores em € (fonte de custo/realização);
+  // Open/Closed Positions = quantidades reais por Position ID (corrige splits e comentários errados).
   const txns=[],log=[];
-  const wsCO=wb.Sheets['Cash Operations'];
-  if(!wsCO)return{transactions:txns,log:['[ERRO] Cash Operations não encontrado']};
-  const rows=XLSX.utils.sheet_to_json(wsCO,{header:1,defval:'',raw:false});
-  const hIdx=rows.findIndex(r=>String(r[0]).trim()==='Type');
-  if(hIdx<0)return{transactions:txns,log:['[ERRO] Header não encontrado']};
-  const hdr=rows[hIdx].map(h=>String(h).trim().toLowerCase());
-  const g=(row,...ns)=>{for(const n of ns){const i=hdr.indexOf(n);if(i>=0&&row[i]!==undefined&&row[i]!=='')return row[i];}return '';};
+  const sheet=n=>wb.Sheets[n]?XLSX.utils.sheet_to_json(wb.Sheets[n],{header:1,defval:'',raw:false}):null;
+  const num=v=>{const s=String(v??'').trim().replace(/\s/g,'');if(!s)return 0;return parseFloat(/,\d{1,2}$/.test(s)&&!s.includes('.')?s.replace(',','.'):s.replace(/,/g,''))||0;};
+  const pid=v=>{const s=String(v??'').trim().replace(/[.,]0+$/,'');return /^\d+$/.test(s)?s:'';};
+  const table=(rows,first)=>{if(!rows)return[];const i=rows.findIndex(r=>String(r[0]).trim()===first||String(r[1]).trim()===first);if(i<0)return[];
+    const h=rows[i].map(x=>String(x).trim().toLowerCase());return rows.slice(i+1).map(r=>{const o={};h.forEach((k,j)=>{if(k&&o[k]===undefined)o[k]=r[j];});return o;});};
 
-  // Agrupar por ID para evitar duplicados (XTB divide posição em múltiplas linhas)
-  const buyMap={};  // ID → {ticker, inst, timeRaw, totalEUR, qty, price, assetType}
-  const divMap={};  // ID → {ticker, inst, timeRaw, div, wht, assetType}
+  const co=table(sheet('Cash Operations'),'Type');
+  if(!co.length)return{transactions:txns,log:['[ERRO] Cash Operations não encontrado ou vazio']};
 
-  rows.slice(hIdx+1).forEach(row=>{
-    const type=String(g(row,'type')).trim();
-    const rawTicker=String(g(row,'ticker','symbol')||'');
-    const ticker2=cleanTk(rawTicker);
-    const inst=String(g(row,'instrument')||ticker2);
-    const timeRaw=g(row,'time');
-    const amount=parseFloat(String(g(row,'amount')).replace(',','.'))||0;
-    const comment=String(g(row,'comment')||'');
-    const id=String(g(row,'id')||Math.random());
-    const assetType=ga(inst,'');
+  // 1) Quantidade real de cada posição (lote) = aberta + fechada
+  const qtyByPos={},closedByPos={};
+  const openLots={};
+  table(sheet('Open Positions'),'Instrument/Position').forEach(r=>{const id=pid(r['instrument/position']);if(id&&String(r.type).trim()==='BUY'){qtyByPos[id]=(qtyByPos[id]||0)+num(r.volume);openLots[id]={ticker:cleanTk(r.ticker),time:String(r['open time (utc)']||''),qty:num(r.volume),price:num(r['open price'])};}});
+  table(sheet('Closed Positions'),'Instrument').forEach(r=>{const id=pid(r['position id']);if(!id)return;const v=num(r.volume);qtyByPos[id]=(qtyByPos[id]||0)+v;closedByPos[id]=(closedByPos[id]||0)+v;});
+  const hasPosSheets=Object.keys(qtyByPos).length>0;
+  if(!hasPosSheets)log.push('[AVISO] Sem folhas Open/Closed Positions — quantidades vêm do Comment (pode falhar em splits)');
 
-    if(type==='Stock purchase'||type==='Stock sale'||type==='Stock sell'){
-      const isSell=type==='Stock sale'||type==='Stock sell';
-      const totalEUR=Math.abs(amount);
-      // Comment: "OPEN BUY 300 @ 5.09" ou "CLOSE BUY 300/1500 @ 5.52"
-      const cm=comment.match(/(\d+(?:\.\d+)?)(?:\/\d+)?\s*@\s*([\d\.]+)/);
-      let qty=cm?parseFloat(cm[1]):0;
-      if(qty<=0)return;
-      if(isSell){
-        // Agrupar vendas pelo total da posição (Comment: "CLOSE BUY 24/300" → posição de 300)
-        // Isto reconstrói a venda real antes do FIFO interno do XTB
-        const totalPos=comment.match(/\/(\d+)/);
-        const posTotal=totalPos?parseInt(totalPos[1]):qty;
-        const posKey=`${ticker2}|${nd(timeRaw)}|${posTotal}`;
-        if(!buyMap['sell_'+posKey]){
-          buyMap['sell_'+posKey]={ticker:ticker2,inst,timeRaw,totalEUR:0,qty:0,assetType,isSell:true,_xtbId:'sell_'+posKey};
-        }
-        buyMap['sell_'+posKey].totalEUR+=totalEUR;
-        buyMap['sell_'+posKey].qty+=qty;
-      } else {
-        // Compras: agrupar por ID para evitar duplicados
-        if(!buyMap[id])buyMap[id]={ticker:ticker2,inst,timeRaw,totalEUR:0,qty:0,assetType,isSell:false};
-        buyMap[id].totalEUR+=totalEUR;
-        buyMap[id].qty+=qty;
-      }
-    } else if(type==='Dividend'||type==='DIVIDENT'||type==='DIVIDENT '){
-      if(!divMap[id])divMap[id]={ticker:ticker2,inst,timeRaw,div:0,wht:0,assetType};
-      divMap[id].div+=amount;
-    } else if(type==='Withholding tax'||type==='Withholding Tax'){
-      if(!divMap[id])divMap[id]={ticker:ticker2,inst,timeRaw,div:0,wht:0,assetType};
-      // Soma algébrica — WHT pode ter estornos positivos
-      divMap[id].wht+=amount; // manter sinal para cancelamento
+  const cqty=c=>{const m=String(c||'').match(/(\d+(?:\.\d+)?)(?:\/\d+(?:\.\d+)?)?\s*@/);return m?parseFloat(m[1]):0;};
+  const buys={},sells={},divs={},refunds=[],fees=[];
+
+  co.forEach(r=>{
+    const type=String(r.type||'').trim();if(!type||type==='Total')return;
+    const t=String(r.ticker||'').trim(),ticker=cleanTk(t),inst=String(r.instrument||ticker),time=String(r.time||'').trim();
+    const amount=num(r.amount),comment=String(r.comment||''),posId=pid(r['position id']);
+    if(type==='Stock purchase'){
+      const k=posId||('row'+r.id);
+      if(!buys[k])buys[k]={ticker,inst,time,eur:0,cq:0,posId,comm:0};
+      buys[k].eur+=Math.abs(amount);buys[k].cq+=cqty(comment);
+    }else if(type==='Stock sell'||type==='Stock sale'){
+      const k=ticker+'|'+time.substring(0,19);
+      if(!sells[k])sells[k]={ticker,inst,time,eur:0,qty:0,posIds:[],comm:0};
+      const s=sells[k];s.eur+=amount;s.posIds.push(posId);
+      let q=cqty(comment);
+      if(!q&&posId&&closedByPos[posId]){q=closedByPos[posId];closedByPos[posId]=0;}
+      if(!q)log.push(`[ERRO] Venda ${ticker} ${time}: quantidade desconhecida (${comment})`);
+      s.qty+=q;
+    }else if(type==='Commission'||type==='SEC fee'){
+      fees.push({ticker,time,eur:Math.abs(amount),posId,type});
+    }else if(type==='Dividend'){
+      const k=ticker+'|'+time.substring(0,10);
+      if(!divs[k])divs[k]={ticker,inst,time,div:0,wht:0};
+      divs[k].div+=amount;
+    }else if(type==='Withholding tax'){
+      if(amount>0){refunds.push({ticker,inst,time,eur:amount,comment});return;}
+      const k=ticker+'|'+time.substring(0,10);
+      if(!divs[k])divs[k]={ticker,inst,time,div:0,wht:0};
+      divs[k].wht+=amount;
     }
   });
 
-  // Processar compras e vendas agrupadas
-  Object.values(buyMap).forEach(b=>{
-    const avgPrice=b.qty>0?b.totalEUR/b.qty:0;
-    txns.push({date:nd(b.timeRaw),ticker:b.ticker,product:b.inst,isin:'',
-      type:b.isSell?'SELL':'BUY',qty:b.qty,price:avgPrice,total:b.totalEUR,
-      currency:'EUR',broker:'XTB',assetType:b.assetType,
-      commission:0,autofx:0,totalCost:0,wht:0,
-      ...(b._xtbId?{_xtbId:b._xtbId}:{})});
+  // 2) Comissões / SEC fee → venda (mesma posição, na data da venda ou depois) ou compra (mesma posição)
+  const sellList=Object.values(sells).sort((a,b)=>a.time.localeCompare(b.time));
+  fees.forEach(f=>{
+    const s=sellList.filter(s=>s.ticker===f.ticker&&s.posIds.includes(f.posId)&&s.time.substring(0,10)<=f.time.substring(0,10)).pop();
+    const b=buys[f.posId];
+    if(f.type==='SEC fee'&&s){s.comm+=f.eur;return;}
+    if(s&&s.time.substring(0,16)===f.time.substring(0,16)){s.comm+=f.eur;return;}
+    if(b){b.comm+=f.eur;return;}
+    if(s){s.comm+=f.eur;return;}
+    log.push(`[AVISO] ${f.type} ${f.ticker} ${f.time} €${f.eur} sem operação associada`);
   });
 
-  // Processar dividendos (WHT algébrico — negativos são retenções, positivos são estornos)
-  Object.values(divMap).forEach(d=>{
-    if(d.div>0){
-      const whtFinal=Math.abs(Math.min(0,d.wht)); // só o valor negativo líquido
-      txns.push({date:nd(d.timeRaw),ticker:d.ticker,product:d.inst,isin:'',
-        type:'DIV',qty:1,price:d.div,total:d.div,currency:'EUR',broker:'XTB',
-        assetType:d.assetType,commission:0,autofx:0,totalCost:0,wht:whtFinal});
-    }
+  // 3) Compras: qty da posição real; avisa se o Comment não bate
+  Object.values(buys).forEach(b=>{
+    let qty=b.posId&&qtyByPos[b.posId]?qtyByPos[b.posId]:b.cq;
+    if(!qty){log.push(`[ERRO] Compra ${b.ticker} ${b.time}: quantidade desconhecida`);return;}
+    if(b.cq&&Math.abs(b.cq-qty)>1e-6)log.push(`[INFO] ${b.ticker} ${nd(b.time)}: Comment diz ${b.cq}, posição tem ${qty} (split?) — usado ${qty}`);
+    txns.push({date:nd(b.time),ticker:b.ticker,product:b.inst,isin:'',type:'BUY',qty,price:b.eur/qty,total:b.eur,
+      currency:'EUR',broker:'XTB',assetType:ga(b.inst,''),commission:b.comm,autofx:0,totalCost:b.comm,wht:0,_xtbPos:b.posId});
+  });
+  // 3b) Lotes abertos sem compra no Cash Operations (ex.: ação oferecida) — custo = qty × open price
+  Object.entries(openLots).forEach(([id,l])=>{if(buys[id])return;
+    const inst=(co.find(r=>cleanTk(r.ticker)===l.ticker)||{}).instrument||l.ticker,eur=l.qty*l.price;
+    txns.push({date:nd(l.time),ticker:l.ticker,product:inst,isin:'',type:'BUY',qty:l.qty,price:l.price,total:eur,
+      currency:'EUR',broker:'XTB',assetType:ga(inst,''),commission:0,autofx:0,totalCost:0,wht:0,_xtbPos:id});
+    log.push(`[INFO] ${l.ticker} ${nd(l.time)}: ${l.qty} un. sem compra no Cash Operations (oferta?) — custo €${eur.toFixed(2)}`);
+  });
+  // 4) Vendas agrupadas (1 ordem = 1 linha)
+  sellList.forEach(s=>{if(!s.qty)return;
+    txns.push({date:nd(s.time),ticker:s.ticker,product:s.inst,isin:'',type:'SELL',qty:s.qty,price:s.eur/s.qty,total:s.eur,
+      currency:'EUR',broker:'XTB',assetType:ga(s.inst,''),commission:s.comm,autofx:0,totalCost:s.comm,wht:0});
+  });
+  // 5) Dividendos (WHT = soma das retenções desse dia) + estornos de retenção em linha própria
+  Object.values(divs).forEach(d=>{
+    if(d.div<=0){if(d.wht)log.push(`[AVISO] Retenção sem dividendo: ${d.ticker} ${d.time} €${d.wht.toFixed(2)}`);return;}
+    txns.push({date:nd(d.time),ticker:d.ticker,product:d.inst,isin:'',type:'DIV',qty:1,price:d.div,total:d.div,
+      currency:'EUR',broker:'XTB',assetType:ga(d.inst,''),commission:0,autofx:0,totalCost:0,wht:Math.abs(d.wht)});
+  });
+  refunds.forEach(f=>{
+    txns.push({date:nd(f.time),ticker:f.ticker,product:f.inst+' — estorno retenção',isin:'',type:'DIV',qty:1,price:0,total:0,
+      currency:'EUR',broker:'XTB',assetType:ga(f.inst,''),commission:0,autofx:0,totalCost:0,wht:-f.eur,refund:true,note:f.comment});
+    log.push(`[INFO] Estorno de retenção ${f.ticker} ${nd(f.time)} +€${f.eur.toFixed(2)} (${f.comment})`);
   });
 
-  const b=txns.filter(t=>t.type==='BUY').length;
-  const s=txns.filter(t=>t.type==='SELL').length;
-  const dv=txns.filter(t=>t.type==='DIV').length;
-  log.unshift(`[OK] XTB: ${b} compras | ${s} vendas | ${dv} dividendos`);
+  const c=k=>txns.filter(t=>t.type===k&&!t.refund).length;
+  log.unshift(`[OK] XTB: ${c('BUY')} compras | ${c('SELL')} vendas | ${c('DIV')} dividendos | ${refunds.length} estornos WHT`);
   return{transactions:txns,log};
 }
 
