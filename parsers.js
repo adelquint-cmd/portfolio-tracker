@@ -266,7 +266,59 @@ function parseXTB_XLSX(wb){
   return{transactions:txns,log};
 }
 
-function parseIBKR_PT(text){const txns=[],log=[];const lines=text.trim().split('\n');const rows=lines.map(l=>{const r=[];let cur='',inQ=false;for(let i=0;i<l.length;i++){const c=l[i];if(c==='"'){inQ=!inQ;}else if(c===','&&!inQ){r.push(cur.trim());cur='';}else{cur+=c;}}r.push(cur.trim());return r;});const txnRows=rows.filter(r=>r[0]==='Histórico de transações'&&r[1]==='Data');const fxRates={};txnRows.forEach(r=>{if(r[5]==='Componente de negociação de Forex'&&r[6]&&r[6].includes('EUR.USD')){const date=r[2]?r[2].substring(0,10):'';const rate=parseFloat(r[8])||0;if(date&&rate>0)fxRates[date]=rate;}});const divMap={};txnRows.forEach(r=>{const tipo=r[5];if(tipo==='Dividendo'||tipo==='Retenção de imposto estrangeiro'){const sym=r[6]&&r[6]!=='-'?r[6]:'';if(!sym)return;const date=r[2]?r[2].substring(0,10):'';const key=`${sym}|${date}`;if(!divMap[key])divMap[key]={sym,date,desc:r[4],div:0,wht:0};const val=parseFloat(String(r[12]).replace(',','.'))||0;if(tipo==='Dividendo')divMap[key].div+=val;else divMap[key].wht+=val;}});txnRows.forEach(r=>{const tipo=r[5];if(tipo!=='Compra'&&tipo!=='Venda')return;const sym=r[6]&&r[6]!=='-'?r[6]:'';if(!sym)return;const date=r[2]?r[2].substring(0,10):'';const qty=Math.abs(parseFloat(r[7])||0);const priceRaw=parseFloat(r[8])||0;const moeda=r[9]||'USD';const grossRaw=parseFloat(String(r[10]).replace(',','.'))||0;const commRaw=parseFloat(String(r[11]).replace(',','.'))||0;let priceEUR,totalEUR,commEUR;if(moeda==='EUR'){priceEUR=priceRaw;totalEUR=Math.abs(grossRaw);commEUR=Math.abs(commRaw);}else{const rate=fxRates[date]||Object.values(fxRates).slice(-1)[0]||1.1;priceEUR=priceRaw/rate;totalEUR=Math.abs(grossRaw)/rate;commEUR=Math.abs(commRaw)/rate;}const isinMatch=r[4]?r[4].match(/\(([A-Z]{2}[A-Z0-9]{10})\)/):null;const isin=isinMatch?isinMatch[1]:'';const ticker2=isin?(ISIN_T[isin]||sym):sym;const product=r[4]?r[4].split('(')[0].trim():sym;txns.push({date:nd(date),ticker:ticker2,product:product||sym,isin,type:tipo==='Compra'?'BUY':'SELL',qty,price:priceEUR,total:totalEUR,currency:'EUR',broker:'IBKR',assetType:ga(product||sym,isin),commission:commEUR,autofx:0,totalCost:commEUR,wht:0});});Object.values(divMap).forEach(d=>{if(d.div===0)return;const sym=d.sym;const isinMatch=d.desc?d.desc.match(/\(([A-Z]{2}[A-Z0-9]{10})\)/):null;const isin=isinMatch?isinMatch[1]:'';const ticker2=isin?(ISIN_T[isin]||sym):sym;txns.push({date:nd(d.date),ticker:ticker2,product:d.desc?d.desc.split('(')[0].trim():sym,isin,type:'DIV',qty:1,price:d.div,total:d.div,currency:'EUR',broker:'IBKR',assetType:ga(d.desc||sym,isin),commission:0,autofx:0,totalCost:0,wht:Math.abs(Math.min(0,d.wht))});});const b=txns.filter(t=>t.type==='BUY').length,s=txns.filter(t=>t.type==='SELL').length,dv=txns.filter(t=>t.type==='DIV').length;log.unshift(`[OK] IBKR: ${b} compras | ${s} vendas | ${dv} dividendos`);return{transactions:txns,log};}
+function parseIBKR_PT(text){
+  // Histórico de transações (PT). Colunas: 2 Data,4 Descrição,5 Tipo,6 Símbolo,7 Qtd,8 Preço,9 Moeda,10 Valor bruto,11 Corretagem,12 Valor líquido
+  // Valor bruto / corretagem / líquido já vêm na moeda-base (EUR) — não converter.
+  const txns=[],log=[];
+  const rows=text.replace(/^﻿/,'').trim().split(/\r?\n/).map(parseCSVLine).filter(r=>r[0]==='Histórico de transações'&&r[1]==='Data');
+  if(!rows.length)return{transactions:txns,log:['[ERRO] Secção "Histórico de transações" não encontrada']};
+  const f=v=>{const n=parseFloat(String(v).replace(/,/g,''));return isNaN(n)?0:n;};
+  const isinOf=d=>{const m=String(d||'').match(/\(([A-Z]{2}[A-Z0-9]{9}\d)\)/);return m?m[1]:'';};
+  const tick=(sym,isin)=>isin&&ISIN_T[isin]?ISIN_T[isin]:String(sym).replace(/\.DvRT$/,'');
+  const isOpt=s=>/\s\d{6}[CP]\d{8}$/.test(String(s));
+  const sorted=[...rows].sort((a,b)=>a[2].localeCompare(b[2]));
+  const held={},names={},divs={},opts=[],isinBySym={};
+  rows.forEach(r=>{const m=String(r[4]).match(/^([A-Z0-9.]+)\(([A-Z]{2}[A-Z0-9]{9}\d)\)/);if(m)isinBySym[m[1].replace(/\.DvRT$/,'')]=m[2];});
+  sorted.forEach(r=>{
+    const date=nd(r[2]),desc=r[4],tipo=r[5],sym=r[6],isin=isinOf(desc)||isinBySym[String(sym).replace(/\.DvRT$/,'')]||'';
+    if(tipo==='Compra'||tipo==='Venda'){
+      const qty=Math.abs(f(r[7])),gross=Math.abs(f(r[10])),comm=Math.abs(f(r[11]));
+      if(isOpt(sym)){opts.push(`${date} ${tipo} ${qty} ${desc} @ ${r[8]} ${r[9]} → €${f(r[12]).toFixed(2)}`);return;}
+      const t=tick(sym,isin);names[sym]=desc;held[sym]=(held[sym]||0)+(tipo==='Compra'?qty:-qty);
+      txns.push({date,ticker:t,product:desc,isin,type:tipo==='Compra'?'BUY':'SELL',qty,price:gross/qty,total:gross,currency:'EUR',broker:'IBKR',
+        assetType:ga(desc,isin),commission:comm,autofx:0,totalCost:comm,wht:0,_sym:sym});
+    }else if(tipo==='Operação societária'){
+      // Fusão/aquisição em dinheiro → venda de toda a posição pelo valor recebido
+      const q=held[sym]||0,eur=f(r[12]);
+      if(q>0&&eur>0&&/Aquisição|Mesclado/i.test(desc)){
+        held[sym]=0;txns.push({date,ticker:tick(sym,isin),product:names[sym]||desc,isin,type:'SELL',qty:q,price:eur/q,total:eur,currency:'EUR',broker:'IBKR',
+          assetType:ga(names[sym]||desc,isin),commission:0,autofx:0,totalCost:0,wht:0,corporate:true});
+        log.push(`[INFO] ${sym} ${date}: aquisição em dinheiro — ${q} ações vendidas por €${eur.toFixed(2)}`);
+      }else log.push(`[AVISO] Operação societária não tratada: ${date} ${desc}`);
+    }else if(tipo==='Dividendo'||tipo==='Retenção de imposto estrangeiro'){
+      const base=String(sym).replace(/\.DvRT$/,''),k=base+'|'+date;
+      if(!divs[k])divs[k]={sym:base,isin,date,desc,div:0,wht:0};
+      if(isin&&!divs[k].isin)divs[k].isin=isin;
+      if(tipo==='Dividendo')divs[k].div+=f(r[12]);else divs[k].wht+=f(r[12]); // soma algébrica (há estornos positivos)
+    }
+  });
+  Object.values(divs).forEach(d=>{
+    const t=tick(d.sym,d.isin),prod=String(d.desc).replace(/\(.*$/,'').trim()||d.sym;
+    if(d.div>0){
+      txns.push({date:d.date,ticker:t,product:names[d.sym]||prod,isin:d.isin,type:'DIV',qty:1,price:d.div,total:d.div,currency:'EUR',broker:'IBKR',
+        assetType:ga(names[d.sym]||prod,d.isin),commission:0,autofx:0,totalCost:0,wht:Math.max(0,-d.wht)});
+      if(d.wht>0.005)log.push(`[INFO] ${d.sym} ${d.date}: estornos de retenção superiores à retenção (+€${d.wht.toFixed(2)})`);
+    }else if(Math.abs(d.wht)>0.005){
+      txns.push({date:d.date,ticker:t,product:(names[d.sym]||prod)+' — acerto retenção',isin:d.isin,type:'DIV',qty:1,price:0,total:0,currency:'EUR',broker:'IBKR',
+        assetType:ga(names[d.sym]||prod,d.isin),commission:0,autofx:0,totalCost:0,wht:-d.wht,refund:d.wht>0});
+      log.push(`[INFO] ${d.sym} ${d.date}: acerto de retenção sem dividendo ${d.wht>0?'+':''}€${d.wht.toFixed(2)}`);
+    }
+  });
+  if(opts.length)log.push(`[AVISO] ${opts.length} operação(ões) de opções não importada(s): `+opts.join(' | '));
+  const c=k=>txns.filter(t=>t.type===k).length;
+  log.unshift(`[OK] IBKR: ${c('BUY')} compras | ${c('SELL')} vendas | ${c('DIV')} dividendos`);
+  return{transactions:txns,log};
+}
 
 function parseFREEDOM24(h,r){const g=(...ns)=>{for(const n of ns){const i=h.indexOf(n);if(i>=0&&r[i]&&r[i]!=='')return r[i];}return '';};const date=g('date','tradedate');const ticker2=g('ticker','symbol','isin');const t=g('operation','type','transactiontype').toLowerCase();const type=t.includes('sell')?'SELL':t.includes('div')?'DIV':'BUY';const qty=Math.abs(pn(g('quantity','volume','qty')));const price=Math.abs(pn(g('price','tradeprice')));const comm=Math.abs(pn(g('commission','fee','fees')));if(!ticker2)return null;return{date:nd(date),ticker:cleanTk(ticker2).substring(0,8),product:ticker2,isin:'',type,qty,price,total:qty*price,currency:g('currency')||'USD',broker:'Freedom24',assetType:ga(ticker2,''),commission:comm,autofx:0,totalCost:comm,wht:0};}
 function parseManualCSV(h,r){const g=(...ns)=>{for(const n of ns){const i=h.indexOf(n);if(i>=0&&r[i]&&r[i]!=='')return r[i];}return '';};const date=g('date');const ticker2=g('ticker','symbol');const type=(g('type')||'BUY').toUpperCase();const qty=Math.abs(pn(g('qty','quantity')));const price=Math.abs(pn(g('price')));const comm=Math.abs(pn(g('cost','commission','fee')));const broker=g('broker')||'Manual';if(!ticker2)return null;return{date:nd(date),ticker:ticker2.toUpperCase(),product:g('product')||ticker2,isin:'',type,qty,price,total:qty*price,currency:g('currency')||'EUR',broker,assetType:ga(ticker2,''),commission:comm,autofx:0,totalCost:comm,wht:0};}
