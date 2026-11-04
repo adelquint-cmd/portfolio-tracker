@@ -189,6 +189,7 @@ select{padding:6px 9px;border-radius:var(--radius-sm);border:0.5px solid var(--c
   <button class="nav-btn active" onclick="switchTab('dashboard',this)">Dashboard</button>
   <button class="nav-btn" onclick="switchTab('posicoes',this)">Posições</button>
   <button class="nav-btn" onclick="switchTab('dividendos',this)">Dividendos</button>
+  <button class="nav-btn" onclick="switchTab('capital',this)">Entradas de Capital</button>
   <button class="nav-btn" onclick="switchTab('transacoes',this)">Transações</button>
   <button class="nav-btn" onclick="switchTab('custos',this)">Custos</button>
   <button class="nav-btn" onclick="switchTab('importar',this)">Importar</button>
@@ -301,6 +302,27 @@ select{padding:6px 9px;border-radius:var(--radius-sm);border:0.5px solid var(--c
       </div>
       <div class="table-wrap"><table><thead id="div-head"></thead><tbody id="div-body"></tbody></table></div>
     </div>
+  </div>
+</div>
+
+<!-- ENTRADAS DE CAPITAL -->
+<div class="section" id="tab-capital">
+  <div class="pos-section">
+    <div class="page-header">
+      <div class="page-title">Entradas de capital</div>
+      <button class="btn btn-sm" onclick="exportCashCSV()">⬇ CSV</button>
+    </div>
+    <div class="filter-bar"><div id="cash-filters"></div></div>
+    <div class="table-card">
+      <div style="padding:10px 14px;background:var(--color-background-secondary);border-bottom:0.5px solid var(--color-border-tertiary);display:flex;gap:18px;flex-wrap:wrap;align-items:center;">
+        <div><span style="font-size:10px;color:var(--color-text-secondary);">Depositado </span><span id="cp-dep" style="font-size:13px;font-weight:500;color:var(--accent-dark);">€0</span></div>
+        <div><span style="font-size:10px;color:var(--color-text-secondary);">Levantado </span><span id="cp-wd" style="font-size:13px;font-weight:500;color:var(--red);">€0</span></div>
+        <div><span style="font-size:10px;color:var(--color-text-secondary);">Capital líquido investido </span><span id="cp-net" style="font-size:13px;font-weight:500;">€0</span></div>
+        <div style="margin-left:auto;font-size:11px;color:var(--color-text-secondary);" id="cp-n"></div>
+      </div>
+      <div class="table-wrap"><table><thead><tr><th>Corretora</th><th class="num">Movimentos</th><th>Primeiro</th><th>Último</th><th class="num">Depósitos €</th><th class="num">Levantamentos €</th><th class="num">Líquido €</th></tr></thead><tbody id="cash-broker-body"></tbody></table></div>
+    </div>
+    <div class="table-card" style="margin-top:14px;"><div class="table-wrap"><table><thead><tr><th>Data</th><th>Corretora</th><th>Descrição</th><th class="num">Valor €</th></tr></thead><tbody id="cash-body"></tbody></table></div></div>
   </div>
 </div>
 
@@ -426,13 +448,15 @@ select{padding:6px 9px;border-radius:var(--radius-sm);border:0.5px solid var(--c
       <div class="kpi"><div class="kpi-label">Imposto estimado (28%)</div><div class="kpi-value" id="f-tax">€0</div></div>
       <div class="kpi"><div class="kpi-label">Dividendos tributáveis</div><div class="kpi-value" id="f-div">€0</div></div>
       <div class="kpi"><div class="kpi-label">Ret. fonte deduzível</div><div class="kpi-value" id="f-wht">€0</div></div>
+      <div class="kpi"><div class="kpi-label">Rentabilidade vendas</div><div class="kpi-value" id="f-rent">—</div></div>
+      <div class="kpi"><div class="kpi-label">Anualizada (ponderada)</div><div class="kpi-value" id="f-rent-ann">—</div><div style="font-size:10px;color:var(--color-text-secondary);" id="f-rent-ann-sub"></div></div>
     </div>
     <div class="fiscal-tabs">
       <button class="ftab active" onclick="switchFiscalTab('mv',this)">Mais-valias (FIFO)</button>
       <button class="ftab" onclick="switchFiscalTab('div',this)">Dividendos</button>
       <button class="ftab" onclick="switchFiscalTab('anexoj',this)">Notas Anexo J</button>
     </div>
-    <div id="fiscal-mv" class="table-card"><div class="table-wrap"><table><thead><tr><th>Produto</th><th>Tipo</th><th>Data compra</th><th>Data venda</th><th class="num">Qtd</th><th class="num">Custo FIFO €</th><th class="num">Realizado €</th><th class="num">Mais-valia €</th><th>Regime</th></tr></thead><tbody id="fiscal-mv-body"><tr><td colspan="9"><div class="empty-state"><div class="empty-title">Sem vendas neste ano</div></div></td></tr></tbody></table></div></div>
+    <div id="fiscal-mv" class="table-card"><div class="table-wrap"><table><thead><tr><th>Produto</th><th>Tipo</th><th>Data compra</th><th>Data venda</th><th class="num">Qtd</th><th class="num">Custo FIFO €</th><th class="num">Realizado €</th><th class="num">Mais-valia €</th><th class="num">Dias</th><th class="num">Rent. %</th><th class="num">Anualiz. %</th><th>Regime</th></tr></thead><tbody id="fiscal-mv-body"><tr><td colspan="12"><div class="empty-state"><div class="empty-title">Sem vendas neste ano</div></div></td></tr></tbody></table></div></div>
     <div id="fiscal-div" style="display:none;" class="table-card"><div class="table-wrap"><table><thead><tr><th>Produto</th><th>Data</th><th>Corretora</th><th class="num">Bruto €</th><th class="num">Ret. fonte €</th><th class="num">Líquido €</th></tr></thead><tbody id="fiscal-div-body"></tbody></table></div></div>
     <div id="fiscal-anexoj" style="display:none;background:var(--color-background-primary);border:0.5px solid var(--color-border-tertiary);border-radius:var(--radius);padding:16px;">
       <div style="font-size:10px;font-weight:500;color:var(--color-text-secondary);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:12px;">Guia para o Anexo J</div>

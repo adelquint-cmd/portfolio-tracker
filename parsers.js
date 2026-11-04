@@ -1,4 +1,6 @@
 // PortfolioTracker PT — parsers.js (utils + parsers das corretoras)
+// Movimento de capital (depósito +, levantamento −) — tipo CASH, não entra em posições nem no fiscal
+function cashTxn(date,amount,broker,note,ref){return{date,ticker:'CASH',product:note||(amount>=0?'Depósito':'Levantamento'),isin:'',type:'CASH',qty:0,price:0,total:amount,currency:'EUR',broker,assetType:'',commission:0,autofx:0,totalCost:0,wht:0,_ref:ref||''};}
 // ── UTILS ─────────────────────────────────────────────────────────────────────
 function pn(s){if(s===null||s===undefined||s==='')return 0;s=String(s).trim().replace(/^"|"$/g,'').replace(/\s/g,'');if(!s||s==='-')return 0;if(/^-?\d{1,3}(\.\d{3})*(,\d+)?$/.test(s))return parseFloat(s.replace(/\./g,'').replace(',','.'))||0;if(/^-?\d+(,\d*)?$/.test(s))return parseFloat(s.replace(',','.'))||0;if(/^-?\d{1,3}(,\d{3})*(\.\d+)?$/.test(s))return parseFloat(s.replace(/,/g,''))||0;return parseFloat(String(s).replace(',','.'))||0;}
 function nd(d){if(!d)return new Date().toISOString().split('T')[0];if(d instanceof Date){const y=d.getFullYear(),m=String(d.getMonth()+1).padStart(2,'0'),dd=String(d.getDate()).padStart(2,'0');return`${y}-${m}-${dd}`;}d=String(d).trim();let m=d.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);if(m)return`${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;m=d.match(/^(\d{4})[\/\-](\d{2})[\/\-](\d{2})/);if(m)return`${m[1]}-${m[2]}-${m[3]}`;return d.substring(0,10);}
@@ -70,6 +72,9 @@ function parseDEGIRO_ACC(text){
       if(!ev[k])ev[k]={product:r[3],isin:r[4],date,cur,div:0,tax:0,rows:0};
       const e=ev[k];if(date<e.date)e.date=date;e.rows++;
       if(isDiv(desc)){e.div+=val;if(val<0)reclass++;}else e.tax+=val;
+    }else if(desc==='flatex Deposit'||desc==='Depósito'||desc==='flatex Withdrawal'||desc==='Levantamento'){
+      // Só estas linhas são dinheiro a entrar/sair. "Depósitos/Levantamentos na sua Conta Caixa" e "Cash Sweep Transfer" são movimentos internos.
+      txns.push(cashTxn(date,cur==='EUR'?val:val/rateFor(date),'DEGIRO',desc,(r[1]||'')+'|'+desc));
     }else if(desc==='Capital Return'){
       const y=date.substring(0,4);capRet[y]=(capRet[y]||0)+val/(cur==='EUR'?1:rateFor(date));
     }else if(/Custo de Conectividade|Taxa de Conectividade/.test(desc)){
@@ -83,6 +88,7 @@ function parseDEGIRO_ACC(text){
       assetType:ga(e.product,e.isin),commission:0,autofx:0,totalCost:0,wht,fx:rate});
   });
   if(reclass)log.push(`[INFO] ${reclass} estornos/reclassificações de dividendos acertados no evento original`);
+  {const cs=txns.filter(t=>t.type==='CASH');if(cs.length)log.push(`[INFO] ${cs.length} movimentos de capital (líquido €${cs.reduce((a,t)=>a+t.total,0).toFixed(2)})`);}
   Object.entries(capRet).sort().forEach(([y,v])=>log.push(`[INFO] Capital Return ${y}: €${v.toFixed(2)} (devolução de capital — não conta como dividendo)`));
   parseDEGIRO_ACC.lastLog=log;
   return txns;
@@ -185,7 +191,7 @@ function parseXTB_XLSX(wb){
   if(!hasPosSheets)log.push('[AVISO] Sem folhas Open/Closed Positions — quantidades vêm do Comment (pode falhar em splits)');
 
   const cqty=c=>{const m=String(c||'').match(/(\d+(?:\.\d+)?)(?:\/\d+(?:\.\d+)?)?\s*@/);return m?parseFloat(m[1]):0;};
-  const buys={},sells={},divs={},refunds=[],fees=[];
+  const buys={},sells={},divs={},refunds=[],fees=[],cash=[];
 
   co.forEach(r=>{
     const type=String(r.type||'').trim();if(!type||type==='Total')return;
@@ -203,6 +209,8 @@ function parseXTB_XLSX(wb){
       if(!q&&posId&&closedByPos[posId]){q=closedByPos[posId];closedByPos[posId]=0;}
       if(!q)log.push(`[ERRO] Venda ${ticker} ${time}: quantidade desconhecida (${comment})`);
       s.qty+=q;
+    }else if(type==='Deposit'||type==='Withdrawal'){
+      cash.push(cashTxn(nd(time),amount,'XTB',(comment.split(',')[0]||type).trim(),String(r.id||'')));
     }else if(type==='Commission'||type==='SEC fee'){
       fees.push({ticker,time,eur:Math.abs(amount),posId,type});
     }else if(type==='Dividend'){
@@ -261,8 +269,9 @@ function parseXTB_XLSX(wb){
     log.push(`[INFO] Estorno de retenção ${f.ticker} ${nd(f.time)} +€${f.eur.toFixed(2)} (${f.comment})`);
   });
 
+  txns.push(...cash);
   const c=k=>txns.filter(t=>t.type===k&&!t.refund).length;
-  log.unshift(`[OK] XTB: ${c('BUY')} compras | ${c('SELL')} vendas | ${c('DIV')} dividendos | ${refunds.length} estornos WHT`);
+  log.unshift(`[OK] XTB: ${c('BUY')} compras | ${c('SELL')} vendas | ${c('DIV')} dividendos | ${refunds.length} estornos WHT | ${cash.length} movimentos de capital (líquido €${cash.reduce((a,t)=>a+t.total,0).toFixed(2)})`);
   return{transactions:txns,log};
 }
 
@@ -287,6 +296,8 @@ function parseIBKR_PT(text){
       const t=tick(sym,isin);names[sym]=desc;held[sym]=(held[sym]||0)+(tipo==='Compra'?qty:-qty);
       txns.push({date,ticker:t,product:desc,isin,type:tipo==='Compra'?'BUY':'SELL',qty,price:gross/qty,total:gross,currency:'EUR',broker:'IBKR',
         assetType:ga(desc,isin),commission:comm,autofx:0,totalCost:comm,wht:0,_sym:sym});
+    }else if(tipo==='Depósito'||tipo==='Levantamento'){
+      txns.push(cashTxn(date,f(r[12]),'IBKR',desc,r[2]+'|'+r[12]));
     }else if(tipo==='Operação societária'){
       // Fusão/aquisição em dinheiro → venda de toda a posição pelo valor recebido
       const q=held[sym]||0,eur=f(r[12]);
@@ -316,7 +327,8 @@ function parseIBKR_PT(text){
   });
   if(opts.length)log.push(`[AVISO] ${opts.length} operação(ões) de opções não importada(s): `+opts.join(' | '));
   const c=k=>txns.filter(t=>t.type===k).length;
-  log.unshift(`[OK] IBKR: ${c('BUY')} compras | ${c('SELL')} vendas | ${c('DIV')} dividendos`);
+  const cs=txns.filter(t=>t.type==='CASH');
+  log.unshift(`[OK] IBKR: ${c('BUY')} compras | ${c('SELL')} vendas | ${c('DIV')} dividendos | ${cs.length} movimentos de capital (líquido €${cs.reduce((a,t)=>a+t.total,0).toFixed(2)})`);
   return{transactions:txns,log};
 }
 

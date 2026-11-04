@@ -6,6 +6,7 @@ window.PT={
   transactions:[],positions:[],broker:'DEGIRO',pending:null,
   quotes:{},posFilter:{type:'all',broker:'all',period:'all',from:'',to:'',view:'pos'},
   divFilter:{period:'ytd',broker:'all',from:'',to:'',view:'list'},
+  cashFilter:{period:'all',broker:'all',from:'',to:''},
   degiro:{txnParsed:null,accParsed:null},
   txnType:'BUY'
 };
@@ -150,7 +151,7 @@ function showPreview(filename,transactions,brokerLabel,log){
     : 'Período desconhecido';
 
   // Tickers únicos
-  const tickers=[...new Set(transactions.filter(t=>t.type!=='FEE').map(t=>t.ticker))];
+  const tickers=[...new Set(transactions.filter(t=>t.type!=='FEE'&&t.type!=='CASH').map(t=>t.ticker))];
   const tagMap={'Ação':'tag-acao','ETF':'tag-etf','Cripto':'tag-cripto','CFD':'tag-cfd'};
 
   // Preencher modal
@@ -166,7 +167,7 @@ function showPreview(filename,transactions,brokerLabel,log){
 
   // Tickers com badge de tipo
   document.getElementById('sum-tickers').innerHTML=tickers.slice(0,30).map(tk=>{
-    const p=transactions.find(t=>t.ticker===tk&&t.type!=='FEE');
+    const p=transactions.find(t=>t.ticker===tk&&t.type!=='FEE'&&t.type!=='CASH');
     const cls=tagMap[p?.assetType||'Ação']||'tag-acao';
     return`<span class="tag ${cls}" style="font-size:11px;">${tk}</span>`;
   }).join('')+(tickers.length>30?`<span style="font-size:11px;color:var(--color-text-secondary);">+${tickers.length-30} mais</span>`:'');
@@ -195,7 +196,7 @@ function confirmImport(){
   const pTypes=[...new Set(pending.map(t=>t.type))];
   const kept=window.PT.transactions.filter(t=>!(brokers.includes(t.broker)&&t.broker!=='Manual'&&pTypes.includes(t.type)&&t.date>=d0&&t.date<=d1));
   const removed=window.PT.transactions.length-kept.length;
-  const key=t=>`${t.broker}|${t.date}|${t.isin||t.ticker}|${t.type}|${Number(t.qty).toFixed(4)}|${Number(t.total||0).toFixed(2)}`;const existing=new Set(kept.map(key));const newT=pending.filter(t=>!existing.has(key(t)));
+  const key=t=>`${t.broker}|${t.date}|${t.isin||t.ticker}|${t.type}|${Number(t.qty).toFixed(4)}|${Number(t.total||0).toFixed(2)}|${t._ref||''}`;const existing=new Set(kept.map(key));const newT=pending.filter(t=>!existing.has(key(t)));
   if(removed)console.log(`[Import] ${removed} transações antigas de ${brokers.join(',')} (${d0} a ${d1}) substituídas`);
   window.PT.transactions=[...kept,...newT].sort((a,b)=>new Date(a.date)-new Date(b.date));window.PT.pending=null;computePositions();updateFilters();
   const types={BUY:0,SELL:0,DIV:0,FEE:0};newT.forEach(t=>types[t.type]=(types[t.type]||0)+1);
@@ -206,7 +207,7 @@ function confirmImport(){
 // ── POSITIONS (por ISIN+broker) ───────────────────────────────────────────────
 function computePositions(){
   const map={};
-  [...window.PT.transactions].filter(t=>t.type!=='FEE').sort((a,b)=>new Date(a.date)-new Date(b.date)).forEach(txn=>{
+  [...window.PT.transactions].filter(t=>t.type!=='FEE'&&t.type!=='CASH').sort((a,b)=>new Date(a.date)-new Date(b.date)).forEach(txn=>{
     const isinKey=txn.isin&&txn.isin.length>5?txn.isin:txn.ticker;const k=`${isinKey}|${txn.broker}`;
     if(!map[k])map[k]={ticker:txn.ticker,product:txn.product,isin:txn.isin||'',broker:txn.broker,assetType:txn.assetType,qty:0,lots:[],totalCommissions:0};
     const p=map[k];
@@ -313,7 +314,7 @@ function filterPos(type,broker,btn){
 }
 
 function updateFilters(){
-  const txns=window.PT.transactions.filter(t=>t.type!=='FEE');const brokers=[...new Set(txns.map(t=>t.broker))];
+  const txns=window.PT.transactions.filter(t=>t.type!=='FEE'&&t.type!=='CASH');const brokers=[...new Set(txns.map(t=>t.broker))];
   document.getElementById('txn-broker').innerHTML='<option value="all">Todas as corretoras</option>'+brokers.map(b=>`<option value="${b}">${b}</option>`).join('');
   const years=[...new Set(txns.map(t=>new Date(t.date).getFullYear()))].sort((a,b)=>b-a);
   document.getElementById('txn-year').innerHTML='<option value="all">Todos os anos</option>'+years.map(y=>`<option value="${y}">${y}</option>`).join('');
@@ -323,7 +324,7 @@ function updateFilters(){
 
 function renderTransactions(){
   const bf=document.getElementById('txn-broker').value,tf=document.getElementById('txn-type').value,yf=document.getElementById('txn-year').value;
-  let txns=[...window.PT.transactions].filter(t=>t.type!=='FEE').sort((a,b)=>new Date(b.date)-new Date(a.date));
+  let txns=[...window.PT.transactions].filter(t=>t.type!=='FEE'&&t.type!=='CASH').sort((a,b)=>new Date(b.date)-new Date(a.date));
   if(bf!=='all')txns=txns.filter(t=>t.broker===bf);if(tf!=='all')txns=txns.filter(t=>t.type===tf);if(yf!=='all')txns=txns.filter(t=>new Date(t.date).getFullYear()==yf);
   const body=document.getElementById('txn-body');if(!txns.length){body.innerHTML='<tr><td colspan="9"><div class="empty-state"><div class="empty-icon">📋</div><div class="empty-title">Sem transações</div></div></td></tr>';return;}
   const tL={BUY:'Compra',SELL:'Venda',DIV:'Dividendo'},tB={BUY:'badge-green',SELL:'badge-red',DIV:'badge-blue'};
@@ -442,6 +443,31 @@ function exportDivCSV(){
   download(toCSV(h,r),`dividendos_${f.view==='asset'?'por_ativo':'lista'}_${periodLabel(f)}${f.broker!=='all'?'_'+f.broker:''}.csv`,'text/csv;charset=utf-8;');
 }
 
+
+// ── ENTRADAS DE CAPITAL ──────────────────────────────────────────────────────
+function cashRows(){
+  const f=window.PT.cashFilter;
+  return window.PT.transactions.filter(t=>t.type==='CASH'&&(f.broker==='all'||t.broker===f.broker)&&inPeriod(t.date,f)).sort((a,b)=>b.date.localeCompare(a.date));
+}
+function renderCapital(){
+  const f=window.PT.cashFilter;renderFilterBar('cash-filters',f,renderCapital);
+  const rows=cashRows(),dep=rows.filter(r=>r.total>0).reduce((s,r)=>s+r.total,0),wd=rows.filter(r=>r.total<0).reduce((s,r)=>s+r.total,0);
+  const e2=v=>'€'+Number(v).toLocaleString('pt-PT',{minimumFractionDigits:2,maximumFractionDigits:2});
+  document.getElementById('cp-dep').textContent=e2(dep);document.getElementById('cp-wd').textContent=e2(-wd);
+  document.getElementById('cp-net').textContent=e2(dep+wd);document.getElementById('cp-n').textContent=`${rows.length} movimento${rows.length!==1?'s':''}`;
+  const g={};rows.forEach(r=>{if(!g[r.broker])g[r.broker]={broker:r.broker,dep:0,wd:0,n:0,first:r.date,last:r.date};const x=g[r.broker];
+    if(r.total>0)x.dep+=r.total;else x.wd+=r.total;x.n++;if(r.date<x.first)x.first=r.date;if(r.date>x.last)x.last=r.date;});
+  const gb=Object.values(g).sort((a,b)=>(b.dep+b.wd)-(a.dep+a.wd));
+  document.getElementById('cash-broker-body').innerHTML=gb.length?gb.map(x=>`<tr><td><strong style="font-size:12px;">${x.broker}</strong></td><td class="num">${x.n}</td><td style="font-size:12px;">${x.first}</td><td style="font-size:12px;">${x.last}</td><td class="num pos">${e2(x.dep)}</td><td class="num neg">${x.wd?'-'+e2(-x.wd):'—'}</td><td class="num"><strong>${e2(x.dep+x.wd)}</strong></td></tr>`).join('')
+    :'<tr><td colspan="7"><div class="empty-state"><div class="empty-icon">🏦</div><div class="empty-title">Sem movimentos neste período</div><div style="font-size:12px;color:var(--color-text-secondary);">Reimporta os extratos (XTB, DEGIRO Account, IBKR) para carregar depósitos e levantamentos</div></div></td></tr>';
+  document.getElementById('cash-body').innerHTML=rows.map(r=>`<tr><td style="font-size:12px;">${r.date}</td><td style="font-size:12px;">${r.broker}</td><td style="font-size:12px;">${(r.product||'').substring(0,50)}</td><td class="num ${r.total>=0?'pos':'neg'}">${r.total>=0?'+':'-'}${e2(Math.abs(r.total))}</td></tr>`).join('');
+}
+function exportCashCSV(){
+  const f=window.PT.cashFilter,rows=cashRows();if(!rows.length){notify('Sem movimentos para exportar');return;}
+  download(toCSV(['Data','Corretora','Tipo','Valor €','Descrição'],[...rows].reverse().map(r=>[r.date,r.broker,r.total>=0?'Depósito':'Levantamento',r.total,r.product])),
+    `entradas_capital_${periodLabel(f)}${f.broker!=='all'?'_'+f.broker:''}.csv`,'text/csv;charset=utf-8;');
+}
+
 // ── BACKUP/RESTORE ────────────────────────────────────────────────────────────
 function closeModal(id){document.getElementById(id).classList.remove('open');}
 function updatePwStrength(pw){const segs=['ps1','ps2','ps3','ps4'].map(id=>document.getElementById(id));const score=pw.length>=12?4:pw.length>=8?3:pw.length>=5?2:pw.length>0?1:0;const cols=['#e0e0e0','#E24B4A','#BA7517','#1D9E75','#0F6E56'];segs.forEach((s,i)=>s.style.background=i<score?cols[score]:'#e0e0e0');}
@@ -456,7 +482,7 @@ function notify(msg){const n=document.getElementById('notif');n.textContent=msg;
 function selectBroker(el){document.querySelectorAll('.broker-card').forEach(c=>c.classList.remove('selected'));el.classList.add('selected');window.PT.broker=el.dataset.broker;const isDEGIRO=el.dataset.broker==='DEGIRO';document.getElementById('degiro-uploads').classList.toggle('visible',isDEGIRO);document.getElementById('drop-zone').style.display=isDEGIRO?'none':'block';document.getElementById('import-preview').style.display='none';}
 function switchTab(name,btn){document.querySelectorAll('.section').forEach(s=>s.classList.remove('active'));document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));document.getElementById('tab-'+name).classList.add('active');
   btn=[...document.querySelectorAll('.nav-btn')].find(b=>(b.getAttribute('onclick')||'').includes(`'${name}'`))||btn;if(btn)btn.classList.add('active');
-  if(name==='dashboard')renderDashboard();if(name==='posicoes')filterPos(window.PT.posFilter.type,window.PT.posFilter.broker,null);if(name==='dividendos')renderDividends();if(name==='transacoes')renderTransactions();if(name==='custos')renderCustos();if(name==='fiscal')renderFiscal();}
+  if(name==='dashboard')renderDashboard();if(name==='posicoes')filterPos(window.PT.posFilter.type,window.PT.posFilter.broker,null);if(name==='dividendos')renderDividends();if(name==='capital')renderCapital();if(name==='transacoes')renderTransactions();if(name==='custos')renderCustos();if(name==='fiscal')renderFiscal();}
 function switchFiscalTab(tab,btn){document.querySelectorAll('.ftab').forEach(b=>b.classList.remove('active'));if(btn)btn.classList.add('active');document.getElementById('fiscal-mv').style.display=tab==='mv'?'block':'none';document.getElementById('fiscal-div').style.display=tab==='div'?'block':'none';document.getElementById('fiscal-anexoj').style.display=tab==='anexoj'?'block':'none';}
 
 // Close modals on overlay click
