@@ -4,7 +4,8 @@
 // ══════════════════════════════════════════════════════════════════════════════
 window.PT={
   transactions:[],positions:[],broker:'DEGIRO',pending:null,
-  quotes:{},posFilter:{type:'all',broker:'all'},
+  quotes:{},posFilter:{type:'all',broker:'all',period:'all',from:'',to:'',view:'pos'},
+  divFilter:{period:'ytd',broker:'all',from:'',to:'',view:'list'},
   degiro:{txnParsed:null,accParsed:null},
   txnType:'BUY'
 };
@@ -220,7 +221,7 @@ function computePositions(){
   }).sort((a,b)=>b.qty*b.avgPrice-a.qty*a.avgPrice);
   updateBrokerFilterBtns();renderDashboard();updateQuotesCoverage();
 }
-function updateBrokerFilterBtns(){const brokers=[...new Set(window.PT.positions.map(p=>p.broker))];document.getElementById('broker-filter-btns').innerHTML=brokers.map(b=>`<button class="filter-btn" onclick="filterPos('${window.PT.posFilter.type}','${b}',this)">${b}</button>`).join('');}
+function updateBrokerFilterBtns(){const f=window.PT.posFilter;renderFilterBar('pos-filters',f,()=>filterPos(f.type,f.broker,null));}
 
 
 // ── DASHBOARD ─────────────────────────────────────────────────────────────────
@@ -280,23 +281,17 @@ function renderDashboard(){
   document.getElementById('recent-divs').innerHTML=recentDivs.map(d=>`<div class="div-row"><div><div class="div-ticker">${d.ticker}</div><div class="div-broker">${d.broker} · ${d.date}</div></div><div style="text-align:right;"><div class="div-amt">+€${Number(d.total).toFixed(2)}</div>${d.wht>0?`<div class="div-wht">ret. €${Number(d.wht).toFixed(2)}</div>`:''}</div></div>`).join('')||'<div class="empty-text" style="font-size:12px;">Sem dividendos ainda</div>';
 }
 function drawDonut(data,total){const cv=document.getElementById('donut'),ctx=cv.getContext('2d');ctx.clearRect(0,0,110,110);const colors={'Ação':'#185FA5','ETF':'#1D9E75','Cripto':'#BA7517','CFD':'#888780'};const ent=Object.entries(data).filter(([,v])=>v>0);if(!ent.length){ctx.strokeStyle='var(--color-border-tertiary)';ctx.lineWidth=18;ctx.beginPath();ctx.arc(55,55,38,0,Math.PI*2);ctx.stroke();document.getElementById('donut-legend').innerHTML='<div style="font-size:12px;color:var(--color-text-secondary);">Sem dados</div>';return;}let s=-Math.PI/2;ctx.lineWidth=18;ent.forEach(([k,v])=>{const sw=(v/total)*Math.PI*2;ctx.strokeStyle=colors[k]||'#888';ctx.beginPath();ctx.arc(55,55,38,s,s+sw);ctx.stroke();s+=sw;});document.getElementById('donut-legend').innerHTML=ent.map(([k,v])=>`<div class="legend-row"><div class="legend-left"><div class="legend-dot" style="background:${colors[k]}"></div>${k}</div><div class="legend-right">${((v/total)*100).toFixed(0)}%</div></div>`).join('');}
-function goToBroker(b){window.PT.posFilter.broker=b;switchTab('posicoes',document.querySelectorAll('.nav-btn')[1]);setTimeout(()=>{document.querySelectorAll('#broker-filter-btns .filter-btn').forEach(btn=>btn.classList.toggle('active',btn.textContent===b));filterPos(window.PT.posFilter.type,b,null);},50);}
+function goToBroker(b){window.PT.posFilter.broker=b;switchTab('posicoes');}
 
 // ── POSIÇÕES ──────────────────────────────────────────────────────────────────
 function filterPos(type,broker,btn){
-  window.PT.posFilter={type,broker};
+  const f=window.PT.posFilter;f.type=type;f.broker=broker;
   if(btn){btn.parentElement.querySelectorAll('.filter-btn').forEach(b=>b.classList.remove('active'));btn.classList.add('active');}
-  let filtered=window.PT.positions;if(type!=='all')filtered=filtered.filter(p=>p.assetType===type);if(broker!=='all')filtered=filtered.filter(p=>p.broker===broker);
-  const tagMap={'Ação':'tag-acao','ETF':'tag-etf','Cripto':'tag-cripto','CFD':'tag-cfd'};const body=document.getElementById('pos-body'),q=window.PT.quotes;
-
-  // Calcular totais do filtro
+  renderFilterBar('pos-filters',f,()=>filterPos(f.type,f.broker,null));
+  const rows=posRows(),lot=f.view==='lot';
+  const tagMap={'Ação':'tag-acao','ETF':'tag-etf','Cripto':'tag-cripto','CFD':'tag-cfd'},body=document.getElementById('pos-body');
   let tCost=0,tMkt=0,hasMkt=false;
-  filtered.forEach(p=>{
-    const cost=p.qty*p.avgPrice;const qt=q[p.ticker];
-    const mktP=qt&&isFinite(qt.priceEUR)&&qt.priceEUR>0?qt.priceEUR:null;
-    tCost+=isFinite(cost)?cost:0;
-    if(mktP){tMkt+=p.qty*mktP;hasMkt=true;}else{tMkt+=cost;}
-  });
+  rows.forEach(x=>{tCost+=x.cost;if(x.val!==null){tMkt+=x.val;hasMkt=true;}else tMkt+=x.cost;});
   const tPl=tMkt-tCost,tPlPct=tCost>0?(tPl/tCost)*100:0;
   document.getElementById('pt-cost').textContent='€'+fmt(tCost);
   document.getElementById('pt-mkt').textContent=hasMkt?'€'+fmt(tMkt):'€'+fmt(tCost)+' *';
@@ -304,18 +299,15 @@ function filterPos(type,broker,btn){
   document.getElementById('pt-pl').style.color=tPl>=0?'var(--accent-dark)':'var(--red)';
   document.getElementById('pt-plpct').textContent=hasMkt?(tPlPct>=0?'+':'')+tPlPct.toFixed(1)+'%':'—';
   document.getElementById('pt-plpct').style.color=tPlPct>=0?'var(--accent-dark)':'var(--red)';
-  document.getElementById('pt-n').textContent=`${filtered.length} posição${filtered.length!==1?'ões':''}`;
-
-  if(!filtered.length){body.innerHTML='<tr><td colspan="11"><div class="empty-state"><div class="empty-icon">📊</div><div class="empty-title">Sem posições</div></div></td></tr>';document.getElementById('pos-count').textContent='';return;}
-  body.innerHTML=filtered.map(p=>{
-    const cost=p.qty*p.avgPrice;
-    const qt=q[p.ticker];
-    const mktP=qt&&isFinite(qt.priceEUR)&&qt.priceEUR>0?qt.priceEUR:null;
-    const mktV=mktP&&isFinite(p.qty)?p.qty*mktP:null;
-    const pl=mktV!==null&&isFinite(cost)?mktV-cost:null;
-    const plPct=pl!==null&&cost>0&&isFinite(pl/cost)?(pl/cost)*100:null;
-    const qs=p.qty%1===0?p.qty.toLocaleString('pt-PT'):p.qty.toFixed(4);
-    return`<tr><td><strong style="font-size:12px;">${p.ticker}</strong><br><span style="font-size:11px;color:var(--color-text-secondary);">${(p.product||'').substring(0,30)}</span></td><td>${p.isin?`<span class="isin-chip">${p.isin}</span>`:''}</td><td><span class="tag ${tagMap[p.assetType]||'tag-acao'}">${p.assetType}</span></td><td style="font-size:12px;">${p.broker}</td><td class="num">${qs}</td><td class="num">${p.avgPrice.toLocaleString('pt-PT',{minimumFractionDigits:2,maximumFractionDigits:4})}</td><td class="num">${fmt(cost)}</td><td class="num">${mktP?mktP.toLocaleString('pt-PT',{minimumFractionDigits:2,maximumFractionDigits:2}):'<span style="color:var(--color-text-secondary);font-size:11px;">—</span>'}</td><td class="num">${mktV?'€'+fmt(mktV):'—'}</td><td class="num">${pl!==null?`<span style="color:${pl>=0?'var(--accent-dark)':'var(--red)'};font-weight:500;">${pl>=0?'+':''}${fmt(pl)}</span>`:'—'}</td><td class="num">${plPct!==null?`<span style="font-size:11px;color:${plPct>=0?'var(--accent-dark)':'var(--red)'}">${plPct>=0?'+':''}${plPct.toFixed(1)}%</span>`:'—'}</td></tr>`;
+  document.getElementById('pt-n').textContent=lot?`${rows.length} lote${rows.length!==1?'s':''}`:`${rows.length} posiç${rows.length!==1?'ões':'ão'}`;
+  document.getElementById('pos-head').innerHTML=lot
+    ?'<tr><th>Produto</th><th>Tipo</th><th>Corretora</th><th>Data compra</th><th class="num">Dias</th><th class="num">Qtd</th><th class="num">Custo/un €</th><th class="num">Custo total €</th><th class="num">Cotação €</th><th class="num">Valor atual €</th><th class="num">P&amp;L €</th><th class="num">P&amp;L %</th></tr>'
+    :'<tr><th>Produto</th><th>Tipo</th><th>Corretora</th><th>1ª compra</th><th class="num">Lotes</th><th class="num">Qtd</th><th class="num">Custo méd €</th><th class="num">Custo total €</th><th class="num">Cotação €</th><th class="num">Valor atual €</th><th class="num">P&amp;L €</th><th class="num">P&amp;L %</th></tr>';
+  if(!rows.length){body.innerHTML='<tr><td colspan="12"><div class="empty-state"><div class="empty-icon">📊</div><div class="empty-title">Sem posições neste filtro</div></div></td></tr>';document.getElementById('pos-count').textContent='';return;}
+  const n2=v=>v.toLocaleString('pt-PT',{minimumFractionDigits:2,maximumFractionDigits:2});
+  body.innerHTML=rows.map(x=>{
+    const plPct=x.pl!==null&&x.cost>=1?x.pl/x.cost*100:null,qs=x.qty%1===0?x.qty.toLocaleString('pt-PT'):x.qty.toFixed(4);
+    return`<tr><td><strong style="font-size:12px;">${x.ticker}</strong><br><span style="font-size:11px;color:var(--color-text-secondary);">${(x.product||'').substring(0,30)}</span>${x.isin?`<br><span class="isin-chip">${x.isin}</span>`:''}</td><td><span class="tag ${tagMap[x.assetType]||'tag-acao'}">${x.assetType}</span></td><td style="font-size:12px;">${x.broker}</td><td style="font-size:12px;">${x.date}</td><td class="num">${lot?x.days:x.nLots}</td><td class="num">${qs}</td><td class="num">${x.avg.toLocaleString('pt-PT',{minimumFractionDigits:2,maximumFractionDigits:4})}</td><td class="num">${fmt(x.cost)}</td><td class="num">${x.mkt?n2(x.mkt):'<span style="color:var(--color-text-secondary);font-size:11px;">—</span>'}</td><td class="num">${x.val!==null?'€'+fmt(x.val):'—'}</td><td class="num">${x.pl!==null?`<span style="color:${x.pl>=0?'var(--accent-dark)':'var(--red)'};font-weight:500;">${x.pl>=0?'+':''}${fmt(x.pl)}</span>`:'—'}</td><td class="num">${plPct!==null?`<span style="font-size:11px;color:${plPct>=0?'var(--accent-dark)':'var(--red)'}">${plPct>=0?'+':''}${plPct.toFixed(1)}%</span>`:'—'}</td></tr>`;
   }).join('');
   document.getElementById('pos-count').textContent='';
 }
@@ -342,6 +334,114 @@ function renderTransactions(){
 function deleteTxn(idx){if(!confirm('Apagar esta transação?'))return;window.PT.transactions.splice(idx,1);computePositions();updateFilters();renderTransactions();notify('Transação apagada');}
 
 
+
+// ══════════════════════════════════════════════════════════════════════════════
+// FILTROS (período + corretora) e CSV — usados em Posições e Dividendos
+// ══════════════════════════════════════════════════════════════════════════════
+const PERIODS=[['ytd','Ano atual'],['prev','Ano anterior'],['all','Tudo'],['manual','Manual']];
+function periodRange(f){
+  const y=new Date().getFullYear();
+  if(f.period==='ytd')return[`${y}-01-01`,`${y}-12-31`];
+  if(f.period==='prev')return[`${y-1}-01-01`,`${y-1}-12-31`];
+  if(f.period==='manual')return[f.from||'0000-01-01',f.to||'9999-12-31'];
+  return['0000-01-01','9999-12-31'];
+}
+function inPeriod(date,f){const[a,b]=periodRange(f);return date>=a&&date<=b;}
+function periodLabel(f){const[a,b]=periodRange(f);return f.period==='all'?'tudo':f.period==='manual'?`${f.from||'início'}_${f.to||'hoje'}`:a.substring(0,4);}
+// Desenha a barra de filtros num contentor; st = objeto de estado; onChange = função de render
+function renderFilterBar(containerId,st,onChange){
+  const el=document.getElementById(containerId);if(!el)return;
+  const brokers=[...new Set(window.PT.transactions.map(t=>t.broker))].sort();
+  el.innerHTML=`<div style="display:flex;gap:4px;flex-wrap:wrap;align-items:center;">
+    ${PERIODS.map(([k,l])=>`<button class="filter-btn${st.period===k?' active':''}" data-p="${k}">${l}</button>`).join('')}
+    <span class="fb-manual" style="display:${st.period==='manual'?'inline-flex':'none'};gap:4px;align-items:center;">
+      <input type="date" class="fb-from" value="${st.from||''}" style="font-size:12px;padding:3px 6px;"> a
+      <input type="date" class="fb-to" value="${st.to||''}" style="font-size:12px;padding:3px 6px;"></span>
+    <select class="fb-broker" style="font-size:12px;"><option value="all">Todas as corretoras</option>${brokers.map(b=>`<option value="${b}"${st.broker===b?' selected':''}>${b}</option>`).join('')}</select>
+  </div>`;
+  el.querySelectorAll('[data-p]').forEach(b=>b.onclick=()=>{st.period=b.dataset.p;renderFilterBar(containerId,st,onChange);onChange();});
+  el.querySelector('.fb-from').onchange=e=>{st.from=e.target.value;onChange();};
+  el.querySelector('.fb-to').onchange=e=>{st.to=e.target.value;onChange();};
+  el.querySelector('.fb-broker').onchange=e=>{st.broker=e.target.value;onChange();};
+}
+// CSV para Excel PT: separador ";" e vírgula decimal, com BOM
+function toCSV(header,rows){
+  const cell=v=>{if(typeof v==='number')return isFinite(v)?String(Math.round(v*1e6)/1e6).replace('.',','):'';const s=String(v??'');return /[;"\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s;};
+  return '﻿'+[header,...rows].map(r=>r.map(cell).join(';')).join('\r\n');
+}
+
+// ── POSIÇÕES: lotes abertos ──────────────────────────────────────────────────
+function openLots(){
+  const out=[];
+  window.PT.positions.forEach(p=>p.lots.filter(l=>l.remaining>0.00001).forEach(l=>out.push({
+    ticker:p.ticker,product:p.product,isin:p.isin,broker:p.broker,assetType:p.assetType,date:l.date,qty:l.remaining,price:l.price})));
+  return out;
+}
+function posView(v,btn){window.PT.posFilter.view=v;if(btn){btn.parentElement.querySelectorAll('.filter-btn').forEach(b=>b.classList.remove('active'));btn.classList.add('active');}filterPos(window.PT.posFilter.type,window.PT.posFilter.broker,null);}
+function posRows(){
+  const f=window.PT.posFilter,q=window.PT.quotes,today=new Date();
+  let lots=openLots().filter(l=>(f.type==='all'||l.assetType===f.type)&&(f.broker==='all'||l.broker===f.broker)&&inPeriod(l.date,f));
+  const mk=l=>{const qt=q[l.ticker];return qt&&isFinite(qt.priceEUR)&&qt.priceEUR>0?qt.priceEUR:null;};
+  if(f.view==='lot'){
+    return lots.sort((a,b)=>a.ticker.localeCompare(b.ticker)||a.date.localeCompare(b.date)).map(l=>{
+      const cost=l.qty*l.price,m=mk(l),val=m?l.qty*m:null;
+      return{...l,cost,avg:l.price,mkt:m,val,pl:val!==null?val-cost:null,days:Math.floor((today-new Date(l.date))/86400000),nLots:1};});
+  }
+  const g={};
+  lots.forEach(l=>{const k=(l.isin||l.ticker)+'|'+l.broker;if(!g[k])g[k]={...l,qty:0,cost:0,first:l.date,last:l.date,nLots:0};
+    const x=g[k];x.qty+=l.qty;x.cost+=l.qty*l.price;x.nLots++;if(l.date<x.first)x.first=l.date;if(l.date>x.last)x.last=l.date;});
+  return Object.values(g).map(x=>{const m=mk(x),val=m?x.qty*m:null;return{...x,date:x.first,avg:x.cost/x.qty,mkt:m,val,pl:val!==null?val-x.cost:null};})
+    .sort((a,b)=>b.cost-a.cost);
+}
+function exportPosCSV(){
+  const f=window.PT.posFilter,rows=posRows();if(!rows.length){notify('Sem posições para exportar');return;}
+  const lot=f.view==='lot';
+  const h=['Ticker','Produto','ISIN','Tipo','Corretora',lot?'Data compra':'1ª compra',...(lot?['Dias']:['Última compra','Nº lotes']),'Quantidade',lot?'Custo/un €':'Custo médio €','Custo total €','Cotação €','Valor atual €','P&L €','P&L %'];
+  const r=rows.map(x=>[x.ticker,x.product,x.isin,x.assetType,x.broker,x.date,...(lot?[x.days]:[x.last,x.nLots]),x.qty,x.avg,x.cost,x.mkt??'',x.val??'',x.pl??'',x.pl!==null&&x.cost>=1?x.pl/x.cost*100:'']);
+  download(toCSV(h,r),`posicoes_${lot?'lotes':'ativos'}_${periodLabel(f)}${f.broker!=='all'?'_'+f.broker:''}.csv`,'text/csv;charset=utf-8;');
+}
+
+// ── DIVIDENDOS ───────────────────────────────────────────────────────────────
+function divRows(){
+  const f=window.PT.divFilter;
+  return window.PT.transactions.filter(t=>t.type==='DIV'&&(f.broker==='all'||t.broker===f.broker)&&inPeriod(t.date,f))
+    .map(t=>({date:t.date,ticker:t.ticker,product:t.product,isin:t.isin||'',broker:t.broker,gross:Number(t.total)||0,wht:Number(t.wht)||0,refund:!!t.refund}))
+    .sort((a,b)=>b.date.localeCompare(a.date));
+}
+function divView(v,btn){window.PT.divFilter.view=v;if(btn){btn.parentElement.querySelectorAll('.filter-btn').forEach(b=>b.classList.remove('active'));btn.classList.add('active');}renderDividends();}
+function divGroup(rows){
+  const g={};rows.forEach(r=>{const k=r.ticker+'|'+r.broker;if(!g[k])g[k]={ticker:r.ticker,product:r.product,isin:r.isin,broker:r.broker,gross:0,wht:0,n:0,last:r.date};
+    const x=g[k];x.gross+=r.gross;x.wht+=r.wht;if(!r.refund)x.n++;if(r.date>x.last)x.last=r.date;});
+  return Object.values(g).sort((a,b)=>b.gross-a.gross);
+}
+function renderDividends(){
+  const f=window.PT.divFilter;renderFilterBar('div-filters',f,renderDividends);
+  const rows=divRows(),tG=rows.reduce((s,r)=>s+r.gross,0),tW=rows.reduce((s,r)=>s+r.wht,0);
+  document.getElementById('dv-gross').textContent='€'+fmt(tG,2);
+  document.getElementById('dv-wht').textContent='€'+fmt(tW,2);
+  document.getElementById('dv-net').textContent='€'+fmt(tG-tW,2);
+  document.getElementById('dv-pct').textContent=tG>0?(tW/tG*100).toFixed(1)+'%':'—';
+  document.getElementById('dv-n').textContent=`${rows.filter(r=>!r.refund).length} pagamentos`;
+  const head=document.getElementById('div-head'),body=document.getElementById('div-body');
+  const e2=v=>'€'+Number(v).toLocaleString('pt-PT',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const whtCell=w=>w<0?`<span class="pos">+${e2(-w)} estorno</span>`:w>0?`<span class="neg">-${e2(w)}</span>`:'—';
+  if(!rows.length){head.innerHTML='';body.innerHTML='<tr><td colspan="7"><div class="empty-state"><div class="empty-icon">💶</div><div class="empty-title">Sem dividendos neste período</div></div></td></tr>';return;}
+  if(f.view==='asset'){
+    head.innerHTML='<tr><th>Ativo</th><th>Corretora</th><th class="num">Pagamentos</th><th>Último</th><th class="num">Bruto €</th><th class="num">Retenção €</th><th class="num">Líquido €</th></tr>';
+    body.innerHTML=divGroup(rows).map(x=>`<tr><td><strong style="font-size:12px;">${x.ticker}</strong><br><span style="font-size:11px;color:var(--color-text-secondary);">${(x.product||'').substring(0,30)}</span></td><td style="font-size:12px;">${x.broker}</td><td class="num">${x.n}</td><td style="font-size:12px;">${x.last}</td><td class="num">${e2(x.gross)}</td><td class="num">${whtCell(x.wht)}</td><td class="num">${e2(x.gross-x.wht)}</td></tr>`).join('');
+  }else{
+    head.innerHTML='<tr><th>Data</th><th>Ativo</th><th>Corretora</th><th class="num">Bruto €</th><th class="num">Retenção €</th><th class="num">%</th><th class="num">Líquido €</th></tr>';
+    body.innerHTML=rows.map(r=>`<tr><td style="font-size:12px;">${r.date}</td><td><strong style="font-size:12px;">${r.ticker}</strong>${r.refund?' <span style="font-size:11px;color:var(--color-text-secondary);">acerto retenção</span>':''}<br><span style="font-size:11px;color:var(--color-text-secondary);">${(r.product||'').substring(0,30)}</span></td><td style="font-size:12px;">${r.broker}</td><td class="num">${r.gross?e2(r.gross):'—'}</td><td class="num">${whtCell(r.wht)}</td><td class="num" style="font-size:11px;">${r.gross>0&&r.wht>0?(r.wht/r.gross*100).toFixed(0)+'%':''}</td><td class="num">${e2(r.gross-r.wht)}</td></tr>`).join('');
+  }
+}
+function exportDivCSV(){
+  const f=window.PT.divFilter,rows=divRows();if(!rows.length){notify('Sem dividendos para exportar');return;}
+  let h,r;
+  if(f.view==='asset'){h=['Ticker','Produto','ISIN','Corretora','Pagamentos','Último','Bruto €','Retenção €','Líquido €'];r=divGroup(rows).map(x=>[x.ticker,x.product,x.isin,x.broker,x.n,x.last,x.gross,x.wht,x.gross-x.wht]);}
+  else{h=['Data','Ticker','Produto','ISIN','Corretora','Bruto €','Retenção €','Líquido €','Nota'];r=rows.map(x=>[x.date,x.ticker,x.product,x.isin,x.broker,x.gross,x.wht,x.gross-x.wht,x.refund?'acerto retenção':'']);}
+  download(toCSV(h,r),`dividendos_${f.view==='asset'?'por_ativo':'lista'}_${periodLabel(f)}${f.broker!=='all'?'_'+f.broker:''}.csv`,'text/csv;charset=utf-8;');
+}
+
 // ── BACKUP/RESTORE ────────────────────────────────────────────────────────────
 function closeModal(id){document.getElementById(id).classList.remove('open');}
 function updatePwStrength(pw){const segs=['ps1','ps2','ps3','ps4'].map(id=>document.getElementById(id));const score=pw.length>=12?4:pw.length>=8?3:pw.length>=5?2:pw.length>0?1:0;const cols=['#e0e0e0','#E24B4A','#BA7517','#1D9E75','#0F6E56'];segs.forEach((s,i)=>s.style.background=i<score?cols[score]:'#e0e0e0');}
@@ -354,7 +454,9 @@ async function decryptData(obj,pw){const enc=new TextEncoder();const km=await cr
 function download(c,f,t){const b=new Blob([c],{type:t});const u=URL.createObjectURL(b);const a=document.createElement('a');a.href=u;a.download=f;a.click();URL.revokeObjectURL(u);}
 function notify(msg){const n=document.getElementById('notif');n.textContent=msg;n.classList.add('show');setTimeout(()=>n.classList.remove('show'),3500);}
 function selectBroker(el){document.querySelectorAll('.broker-card').forEach(c=>c.classList.remove('selected'));el.classList.add('selected');window.PT.broker=el.dataset.broker;const isDEGIRO=el.dataset.broker==='DEGIRO';document.getElementById('degiro-uploads').classList.toggle('visible',isDEGIRO);document.getElementById('drop-zone').style.display=isDEGIRO?'none':'block';document.getElementById('import-preview').style.display='none';}
-function switchTab(name,btn){document.querySelectorAll('.section').forEach(s=>s.classList.remove('active'));document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));document.getElementById('tab-'+name).classList.add('active');if(btn)btn.classList.add('active');if(name==='dashboard')renderDashboard();if(name==='posicoes')filterPos(window.PT.posFilter.type,window.PT.posFilter.broker,null);if(name==='transacoes')renderTransactions();if(name==='custos')renderCustos();if(name==='fiscal')renderFiscal();}
+function switchTab(name,btn){document.querySelectorAll('.section').forEach(s=>s.classList.remove('active'));document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));document.getElementById('tab-'+name).classList.add('active');
+  btn=[...document.querySelectorAll('.nav-btn')].find(b=>(b.getAttribute('onclick')||'').includes(`'${name}'`))||btn;if(btn)btn.classList.add('active');
+  if(name==='dashboard')renderDashboard();if(name==='posicoes')filterPos(window.PT.posFilter.type,window.PT.posFilter.broker,null);if(name==='dividendos')renderDividends();if(name==='transacoes')renderTransactions();if(name==='custos')renderCustos();if(name==='fiscal')renderFiscal();}
 function switchFiscalTab(tab,btn){document.querySelectorAll('.ftab').forEach(b=>b.classList.remove('active'));if(btn)btn.classList.add('active');document.getElementById('fiscal-mv').style.display=tab==='mv'?'block':'none';document.getElementById('fiscal-div').style.display=tab==='div'?'block':'none';document.getElementById('fiscal-anexoj').style.display=tab==='anexoj'?'block':'none';}
 
 // Close modals on overlay click

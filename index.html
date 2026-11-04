@@ -188,6 +188,7 @@ select{padding:6px 9px;border-radius:var(--radius-sm);border:0.5px solid var(--c
 <nav class="nav">
   <button class="nav-btn active" onclick="switchTab('dashboard',this)">Dashboard</button>
   <button class="nav-btn" onclick="switchTab('posicoes',this)">Posições</button>
+  <button class="nav-btn" onclick="switchTab('dividendos',this)">Dividendos</button>
   <button class="nav-btn" onclick="switchTab('transacoes',this)">Transações</button>
   <button class="nav-btn" onclick="switchTab('custos',this)">Custos</button>
   <button class="nav-btn" onclick="switchTab('importar',this)">Importar</button>
@@ -247,8 +248,14 @@ select{padding:6px 9px;border-radius:var(--radius-sm);border:0.5px solid var(--c
       <button class="filter-btn" onclick="filterPos('ETF','all',this)">ETFs</button>
       <button class="filter-btn" onclick="filterPos('Cripto','all',this)">Cripto</button>
       <button class="filter-btn" onclick="filterPos('CFD','all',this)">CFD</button>
-      <span style="color:var(--color-border-secondary);margin:0 2px;">|</span>
-      <div id="broker-filter-btns" style="display:flex;gap:4px;flex-wrap:wrap;"></div>
+    </div>
+    <div class="filter-bar" style="justify-content:space-between;">
+      <div id="pos-filters"></div>
+      <div style="display:flex;gap:4px;align-items:center;">
+        <button class="filter-btn active" onclick="posView('pos',this)">Por ativo</button>
+        <button class="filter-btn" onclick="posView('lot',this)">Por lote</button>
+        <button class="btn btn-sm" onclick="exportPosCSV()" style="margin-left:6px;">⬇ CSV</button>
+      </div>
     </div>
     <div class="table-card">
       <!-- Totals bar -->
@@ -264,11 +271,36 @@ select{padding:6px 9px;border-radius:var(--radius-sm);border:0.5px solid var(--c
       </div>
       <div class="table-wrap">
       <table>
-        <thead><tr><th>Produto</th><th>ISIN</th><th>Tipo</th><th>Corretora</th><th class="num">Qtd</th><th class="num">Custo méd €</th><th class="num">Custo total €</th><th class="num">Cotação €</th><th class="num">Valor atual €</th><th class="num">P&amp;L €</th><th class="num">P&amp;L %</th></tr></thead>
+        <thead id="pos-head"><tr><th>Produto</th><th>ISIN</th><th>Tipo</th><th>Corretora</th><th class="num">Qtd</th><th class="num">Custo méd €</th><th class="num">Custo total €</th><th class="num">Cotação €</th><th class="num">Valor atual €</th><th class="num">P&amp;L €</th><th class="num">P&amp;L %</th></tr></thead>
         <tbody id="pos-body"><tr><td colspan="11"><div class="empty-state"><div class="empty-icon">📊</div><div class="empty-title">Sem posições</div></div></td></tr></tbody>
       </table>
     </div></div>
     <div id="pos-count" style="font-size:11px;color:var(--color-text-secondary);padding:6px 2px;"></div>
+  </div>
+</div>
+
+<!-- DIVIDENDOS -->
+<div class="section" id="tab-dividendos">
+  <div class="pos-section">
+    <div class="page-header">
+      <div class="page-title">Dividendos</div>
+      <div style="display:flex;gap:4px;align-items:center;">
+        <button class="filter-btn active" onclick="divView('list',this)">Lista</button>
+        <button class="filter-btn" onclick="divView('asset',this)">Por ativo</button>
+        <button class="btn btn-sm" onclick="exportDivCSV()" style="margin-left:6px;">⬇ CSV</button>
+      </div>
+    </div>
+    <div class="filter-bar"><div id="div-filters"></div></div>
+    <div class="table-card">
+      <div style="padding:10px 14px;background:var(--color-background-secondary);border-bottom:0.5px solid var(--color-border-tertiary);display:flex;gap:18px;flex-wrap:wrap;align-items:center;">
+        <div><span style="font-size:10px;color:var(--color-text-secondary);">Bruto </span><span id="dv-gross" style="font-size:13px;font-weight:500;">€0</span></div>
+        <div><span style="font-size:10px;color:var(--color-text-secondary);">Retenção </span><span id="dv-wht" style="font-size:13px;font-weight:500;color:var(--red);">€0</span></div>
+        <div><span style="font-size:10px;color:var(--color-text-secondary);">Líquido </span><span id="dv-net" style="font-size:13px;font-weight:500;color:var(--accent-dark);">€0</span></div>
+        <div><span style="font-size:10px;color:var(--color-text-secondary);">Ret. média </span><span id="dv-pct" style="font-size:13px;font-weight:500;">—</span></div>
+        <div style="margin-left:auto;font-size:11px;color:var(--color-text-secondary);" id="dv-n"></div>
+      </div>
+      <div class="table-wrap"><table><thead id="div-head"></thead><tbody id="div-body"></tbody></table></div>
+    </div>
   </div>
 </div>
 
