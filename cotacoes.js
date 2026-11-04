@@ -37,7 +37,7 @@ const TICKER_ALIASES={
   'TELFY':'TEF','NKLAQ':'NKLA',
 };
 
-async function fetchQuote(ticker2){
+async function fetchQuote(ticker2,timeoutMs=10000){
   const fx=window.PT.fxEURUSD||1.09;
   const fxGBP=window.PT.fxEURGBP||0.856;
   const fxCHF=window.PT.fxEURCHF||0.946;
@@ -48,7 +48,7 @@ async function fetchQuote(ticker2){
   const yahooUrl=`https://query1.finance.yahoo.com/v8/finance/chart/${ticker2}?interval=1d&range=1d`;
   const proxy=`https://portfolio-proxy-yc3o.onrender.com/?url=${encodeURIComponent(yahooUrl)}`;
   try{
-    const resp=await fetch(proxy,{signal:AbortSignal.timeout(10000)});
+    const resp=await fetch(proxy,{signal:AbortSignal.timeout(timeoutMs)});
     if(!resp.ok)return null;
     const text=await resp.text();
     if(!text||text.length<10)return null;
@@ -81,7 +81,9 @@ async function refreshQuotes(){
 
   // EUR/USD live
   // Taxas de câmbio dinâmicas
-  try{const fxQ=await fetchQuote('EURUSD=X');if(fxQ&&fxQ.price>0)window.PT.fxEURUSD=fxQ.price;}catch(e){}
+  // 1º pedido com 60s: o proxy no Render (gratuito) adormece e demora ~20-30s a acordar
+  btn.innerHTML='<span class="spinner"></span> A acordar o proxy...';
+  try{const fxQ=await fetchQuote('EURUSD=X',60000);if(fxQ&&fxQ.price>0)window.PT.fxEURUSD=fxQ.price;else console.warn('[Cotações] proxy não respondeu ao EURUSD');}catch(e){}
   if(!window.PT.fxEURUSD)window.PT.fxEURUSD=1.09;
   // Buscar outras taxas em paralelo
   try{
