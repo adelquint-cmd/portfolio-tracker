@@ -120,8 +120,14 @@ function confirmDEGIROImport(){
 }
 
 // ── FILE HANDLING ─────────────────────────────────────────────────────────────
-function handleDrop(e){e.preventDefault();e.currentTarget.classList.remove('dragover');const f=e.dataTransfer.files[0];if(f)processFile(f);}
-function handleFile(input){if(input.files[0])processFile(input.files[0]);}
+function handleDrop(e){e.preventDefault();e.currentTarget.classList.remove('dragover');const fs=[...e.dataTransfer.files];if(fs.length&&fs.every(f=>/\.pdf$/i.test(f.name)))processEquatePDFs(fs);else if(fs[0])processFile(fs[0]);}
+function handleFile(input){const fs=[...input.files];if(fs.length&&fs.every(f=>/\.pdf$/i.test(f.name)))processEquatePDFs(fs);else if(fs[0])processFile(fs[0]);input.value='';}
+async function processEquatePDFs(files){
+  try{notify(`A ler ${files.length} PDF...`);const res=[];
+    for(const f of files){const lines=await pdfToLines(await f.arrayBuffer());if(!lines.some(l=>/Equatex|Declaração de participações|Plan Statement/i.test(l))){notify(`${f.name} não parece uma declaração EquatePlus`);continue;}res.push(parseEQUATE_LINES(lines));}
+    if(!res.length)return;const r=mergeEQUATE(res);showPreview(files.map(f=>f.name).join(', '),r.transactions,'Equate',r.log);
+  }catch(err){notify('Erro no PDF: '+err.message);console.error(err);}
+}
 function processFile(file){
   const ext=file.name.split('.').pop().toLowerCase(),broker=window.PT.broker;
   if(ext==='xlsx'||ext==='xls'){
@@ -193,8 +199,9 @@ function confirmImport(){
   const pending=window.PT.pending;if(!pending||!pending.length){notify('Nada para importar');return;}
   // Re-importação: o ficheiro novo substitui as transações dessa corretora no período que cobre (evita duplicados de versões antigas do parser)
   const brokers=[...new Set(pending.map(t=>t.broker))];const dates=pending.map(t=>t.date).sort();const d0=dates[0],d1=dates[dates.length-1];
-  const pTypes=[...new Set(pending.map(t=>t.type))];
-  const kept=window.PT.transactions.filter(t=>!(brokers.includes(t.broker)&&t.broker!=='Manual'&&pTypes.includes(t.type)&&t.date>=d0&&t.date<=d1));
+  // Intervalo a substituir por tipo (o parser pode indicar _rangeFrom/_rangeTo, ex.: Equate = declaração anual)
+  const rng={};pending.forEach(t=>{const a=t._rangeFrom||t.date,b=t._rangeTo||t.date,r=rng[t.type]||(rng[t.type]=[a,b]);if(a<r[0])r[0]=a;if(b>r[1])r[1]=b;});
+  const kept=window.PT.transactions.filter(t=>!(brokers.includes(t.broker)&&t.broker!=='Manual'&&rng[t.type]&&t.date>=rng[t.type][0]&&t.date<=rng[t.type][1]));
   const removed=window.PT.transactions.length-kept.length;
   const key=t=>`${t.broker}|${t.date}|${t.isin||t.ticker}|${t.type}|${Number(t.qty).toFixed(4)}|${Number(t.total||0).toFixed(2)}|${t._ref||''}`;const existing=new Set(kept.map(key));const newT=pending.filter(t=>!existing.has(key(t)));
   if(removed)console.log(`[Import] ${removed} transações antigas de ${brokers.join(',')} (${d0} a ${d1}) substituídas`);
@@ -213,7 +220,7 @@ function computePositions(){
     const p=map[k];
     if((txn.type==='BUY'||txn.type==='SELL')&&(txn.product||'').length>(p.product||'').length)p.product=txn.product;
     if(txn.isin&&txn.isin.length>5)p.isin=txn.isin;
-    if(txn.type==='BUY'){p.qty+=txn.qty;p.lots.push({qty:txn.qty,price:txn.price,date:txn.date,remaining:txn.qty});p.totalCommissions+=(txn.totalCost||0);}
+    if(txn.type==='BUY'){p.qty+=txn.qty;p.lots.push({qty:txn.qty,price:txn.price,date:txn.date,remaining:txn.qty,plan:txn.plan,unmatched:txn.unmatched});p.totalCommissions+=(txn.totalCost||0);}
     else if(txn.type==='SELL'){let s=txn.qty;for(const l of p.lots){if(s<=0)break;const c=Math.min(l.remaining,s);l.remaining-=c;s-=c;}p.qty=Math.max(0,p.qty-txn.qty);}
   });
   window.PT.positions=Object.values(map).filter(p=>p.qty>0.00001).map(p=>{
@@ -226,7 +233,7 @@ function updateBrokerFilterBtns(){const f=window.PT.posFilter;renderFilterBar('p
 
 
 // ── DASHBOARD ─────────────────────────────────────────────────────────────────
-const bC={DEGIRO:'#FF6600',eToro:'#00C853',XTB:'#E30613',IBKR:'#003087',Freedom24:'#0057B8',Manual:'#888'};
+const bC={Equate:'#009999',DEGIRO:'#FF6600',eToro:'#00C853',XTB:'#E30613',IBKR:'#003087',Freedom24:'#0057B8',Manual:'#888'};
 function updateQuotesCoverage(){
   const pos=window.PT.positions,q=window.PT.quotes;
   if(!pos.length){document.getElementById('quotes-ok-count').textContent='0/0';document.getElementById('quotes-last-time').textContent='sem posições';setQuotesDonut(0,'#e0e0e0');return;}
@@ -288,7 +295,7 @@ function goToBroker(b){window.PT.posFilter.broker=b;switchTab('posicoes');}
 function filterPos(type,broker,btn){
   const f=window.PT.posFilter;f.type=type;f.broker=broker;
   if(btn){btn.parentElement.querySelectorAll('.filter-btn').forEach(b=>b.classList.remove('active'));btn.classList.add('active');}
-  renderFilterBar('pos-filters',f,()=>filterPos(f.type,f.broker,null));
+  renderFilterBar('pos-filters',f,()=>filterPos(f.type,f.broker,null));renderSiemensPanel();
   const rows=posRows(),lot=f.view==='lot';
   const tagMap={'Ação':'tag-acao','ETF':'tag-etf','Cripto':'tag-cripto','CFD':'tag-cfd'},body=document.getElementById('pos-body');
   let tCost=0,tMkt=0,hasMkt=false;
@@ -384,7 +391,7 @@ function toCSV(header,rows){
 function openLots(){
   const out=[];
   window.PT.positions.forEach(p=>p.lots.filter(l=>l.remaining>0.00001).forEach(l=>out.push({
-    ticker:p.ticker,product:p.product,isin:p.isin,broker:p.broker,assetType:p.assetType,date:l.date,qty:l.remaining,price:l.price})));
+    ticker:p.ticker,product:p.product,isin:p.isin,broker:p.broker,assetType:p.assetType,date:l.date,qty:l.remaining,price:l.price,plan:l.plan,unmatched:l.unmatched})));
   return out;
 }
 function posView(v,btn){window.PT.posFilter.view=v;if(btn){btn.parentElement.querySelectorAll('.filter-btn').forEach(b=>b.classList.remove('active'));btn.classList.add('active');}filterPos(window.PT.posFilter.type,window.PT.posFilter.broker,null);}
@@ -490,6 +497,46 @@ function exportCashCSV(){
   const f=window.PT.cashFilter,rows=cashRows();if(!rows.length){notify('Sem movimentos para exportar');return;}
   download(toCSV(['Data','Corretora','Tipo','Valor €','Descrição'],[...rows].reverse().map(r=>[r.date,r.broker,r.total>=0?'Depósito':'Levantamento',r.total,r.product])),
     `entradas_capital_${periodLabel(f)}${f.broker!=='all'?'_'+f.broker:''}.csv`,'text/csv;charset=utf-8;');
+}
+
+
+// ── PLANO SIEMENS (Equate): rentabilidade "do teu bolso" vs só a ação ─────────
+// TIR (XIRR) por bisseção: fluxos [{date,amt}] (negativo = dinheiro que sai do bolso)
+function xirr(flows){
+  if(flows.length<2||!flows.some(f=>f.amt<0)||!flows.some(f=>f.amt>0))return null;
+  const t0=new Date(flows[0].date);const npv=r=>flows.reduce((s,f)=>s+f.amt/Math.pow(1+r,(new Date(f.date)-t0)/31557600000),0);
+  let lo=-0.99,hi=10;if(npv(lo)*npv(hi)>0)return null;
+  for(let i=0;i<200;i++){const mid=(lo+hi)/2;if(npv(lo)*npv(mid)<=0)hi=mid;else lo=mid;}
+  return(lo+hi)/2;
+}
+function renderSiemensPanel(){
+  const el=document.getElementById('siemens-panel');if(!el)return;
+  const f=window.PT.posFilter;
+  const lots=openLots().filter(l=>l.broker==='Equate');
+  if(f.broker!=='Equate'||!lots.length){el.style.display='none';return;}
+  el.style.display='block';
+  const q=window.PT.quotes[EQ_TK]||window.PT.quotes['SHL'];const px=q&&q.priceEUR>0?q.priceEUR:null;
+  const sum=(a,fn)=>a.reduce((s,x)=>s+fn(x),0),today=new Date().toISOString().slice(0,10);
+  const own=lots.filter(l=>l.plan==='SMP'||l.plan==='MIP'),match=lots.filter(l=>l.plan==='MATCH'),drip=lots.filter(l=>l.plan==='DRIP'),unm=lots.filter(l=>l.unmatched);
+  const qAll=sum(lots,l=>l.qty),costOwn=sum(own,l=>l.qty*l.price),costAll=sum(lots,l=>l.qty*l.price),val=px?qAll*px:null;
+  const divs=window.PT.transactions.filter(t=>t.type==='DIV'&&t.broker==='Equate'),dG=sum(divs,t=>t.total),dW=sum(divs,t=>t.wht||0);
+  const irrOwn=val!==null?xirr([...own.map(l=>({date:l.date,amt:-l.qty*l.price})),{date:today,amt:val}].sort((a,b)=>a.date.localeCompare(b.date))):null;
+  const irrAll=val!==null?xirr([...lots.map(l=>({date:l.date,amt:-l.qty*l.price})),{date:today,amt:val}].sort((a,b)=>a.date.localeCompare(b.date))):null;
+  const e=v=>v===null?'—':'€'+fmt(v,2),p=v=>v===null||!isFinite(v)?'—':(v>=0?'+':'')+(v*100).toFixed(1)+'%',n3=v=>v.toLocaleString('pt-PT',{maximumFractionDigits:3});
+  const kpi=(l,v,sub,col)=>`<div class="kpi"><div class="kpi-label">${l}</div><div class="kpi-value"${col?` style="color:${col}"`:''}>${v}</div>${sub?`<div style="font-size:10px;color:var(--color-text-secondary);">${sub}</div>`:''}</div>`;
+  const gain=val!==null?val-costOwn:null,qUn=sum(unm,l=>l.qty);
+  el.innerHTML=`<div style="font-size:13px;font-weight:500;margin-bottom:8px;">Plano Siemens — rentabilidade do teu bolso</div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:8px;">
+    ${kpi('Investido por ti',e(costOwn),`${n3(sum(own,l=>l.qty))} ações (SMP + MIP)`)}
+    ${kpi('Matching recebido',n3(sum(match,l=>l.qty))+' ações',`valor à data ${e(sum(match,l=>l.qty*l.price))} · custo 0 para ti`)}
+    ${kpi('Dividendos reinvestidos',n3(sum(drip,l=>l.qty))+' ações',`dividendos ${e(dG)} brutos · ${e(dW)} retidos`)}
+    ${kpi('Valor atual',e(val),px?`${n3(qAll)} ações × €${px.toFixed(2)}`:'atualiza as cotações')}
+    ${kpi('Ganho vs teu bolso',gain===null?'—':(gain>=0?'+':'-')+e(Math.abs(gain)),p(gain!==null&&costOwn>0?gain/costOwn:null),gain!==null?(gain>=0?'var(--accent-dark)':'var(--red)'):null)}
+    ${kpi('TIR anual — teu bolso',p(irrOwn),'com matching e dividendos a custo 0')}
+    ${kpi('TIR anual — só a ação',p(irrAll),'todos os lotes ao custo (vista fiscal)')}
+  </div>
+  ${qUn>0?`<div style="font-size:11px;color:var(--color-text-secondary);">⏳ ${n3(qUn)} ações SMP ainda sem matching → estimativa ${n3(qUn/3)} ações a receber (1 por 3)${px?`, ~${e(qUn/3*px)} ao preço atual`:''}. Não incluído nos números acima.</div>`:''}
+  <div style="font-size:11px;color:var(--color-text-secondary);margin-top:4px;">O IRS pago no salário sobre o matching não está incluído.</div>`;
 }
 
 // ── BACKUP/RESTORE ────────────────────────────────────────────────────────────

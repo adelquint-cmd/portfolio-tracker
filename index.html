@@ -244,11 +244,11 @@ select{padding:6px 9px;border-radius:var(--radius-sm);border:0.5px solid var(--c
       </div>
     </div>
     <div class="filter-bar">
-      <button class="filter-btn active" onclick="filterPos('all','all',this)">Todas</button>
-      <button class="filter-btn" onclick="filterPos('Ação','all',this)">Ações</button>
-      <button class="filter-btn" onclick="filterPos('ETF','all',this)">ETFs</button>
-      <button class="filter-btn" onclick="filterPos('Cripto','all',this)">Cripto</button>
-      <button class="filter-btn" onclick="filterPos('CFD','all',this)">CFD</button>
+      <button class="filter-btn active" onclick="filterPos('all',window.PT.posFilter.broker,this)">Todas</button>
+      <button class="filter-btn" onclick="filterPos('Ação',window.PT.posFilter.broker,this)">Ações</button>
+      <button class="filter-btn" onclick="filterPos('ETF',window.PT.posFilter.broker,this)">ETFs</button>
+      <button class="filter-btn" onclick="filterPos('Cripto',window.PT.posFilter.broker,this)">Cripto</button>
+      <button class="filter-btn" onclick="filterPos('CFD',window.PT.posFilter.broker,this)">CFD</button>
     </div>
     <div class="filter-bar" style="justify-content:space-between;">
       <div id="pos-filters"></div>
@@ -258,6 +258,7 @@ select{padding:6px 9px;border-radius:var(--radius-sm);border:0.5px solid var(--c
         <button class="btn btn-sm" onclick="exportPosCSV()" style="margin-left:6px;">⬇ CSV</button>
       </div>
     </div>
+    <div id="siemens-panel" class="table-card" style="display:none;padding:12px 14px;margin-bottom:12px;"></div>
     <div class="table-card">
       <!-- Totals bar -->
       <div id="pos-totals" style="padding:10px 14px;background:var(--color-background-secondary);border-bottom:0.5px solid var(--color-border-tertiary);display:flex;gap:20px;flex-wrap:wrap;align-items:center;">
@@ -389,6 +390,11 @@ select{padding:6px 9px;border-radius:var(--radius-sm);border:0.5px solid var(--c
         <div class="bc-name">IBKR</div>
         <div class="bc-hint">CSV PT — Desempenho e relatórios → Relatórios → Histórico de transações → Exportar CSV (idioma: Português)</div>
       </div>
+      <div class="broker-card" data-broker="EQUATE" onclick="selectBroker(this)">
+        <div class="bc-icon" style="background:#009999;">EQ</div>
+        <div class="bc-name">EquatePlus</div>
+        <div class="bc-hint">PDF — Declaração de fim de ano (Declaração de participações do plano). Podes escolher vários anos de uma vez.</div>
+      </div>
       <div class="broker-card" data-broker="FREEDOM24" onclick="selectBroker(this)">
         <div class="bc-icon" style="background:#0057B8;">F24</div>
         <div class="bc-name">Freedom24</div>
@@ -415,7 +421,7 @@ select{padding:6px 9px;border-radius:var(--radius-sm);border:0.5px solid var(--c
       ondrop="handleDrop(event)">
       <div style="font-size:22px;margin-bottom:6px;">📂</div>
       <div style="font-size:13px;font-weight:500;color:var(--color-text-primary);margin-bottom:6px;">Arrastar ficheiro aqui ou selecionar</div>
-      <input type="file" id="file-input" accept=".csv,.txt,.xlsx,.xls" style="display:block;margin:0 auto;font-size:12px;" onchange="handleFile(this)">
+      <input type="file" id="file-input" multiple accept=".csv,.txt,.xlsx,.xls,.pdf" style="display:block;margin:0 auto;font-size:12px;" onchange="handleFile(this)">
     </div>
     <div id="import-preview" style="display:none;">
       <div class="preview-box">

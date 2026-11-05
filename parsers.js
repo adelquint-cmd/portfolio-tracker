@@ -335,3 +335,81 @@ function parseIBKR_PT(text){
 function parseFREEDOM24(h,r){const g=(...ns)=>{for(const n of ns){const i=h.indexOf(n);if(i>=0&&r[i]&&r[i]!=='')return r[i];}return '';};const date=g('date','tradedate');const ticker2=g('ticker','symbol','isin');const t=g('operation','type','transactiontype').toLowerCase();const type=t.includes('sell')?'SELL':t.includes('div')?'DIV':'BUY';const qty=Math.abs(pn(g('quantity','volume','qty')));const price=Math.abs(pn(g('price','tradeprice')));const comm=Math.abs(pn(g('commission','fee','fees')));if(!ticker2)return null;return{date:nd(date),ticker:cleanTk(ticker2).substring(0,8),product:ticker2,isin:'',type,qty,price,total:qty*price,currency:g('currency')||'USD',broker:'Freedom24',assetType:ga(ticker2,''),commission:comm,autofx:0,totalCost:comm,wht:0};}
 function parseManualCSV(h,r){const g=(...ns)=>{for(const n of ns){const i=h.indexOf(n);if(i>=0&&r[i]&&r[i]!=='')return r[i];}return '';};const date=g('date');const ticker2=g('ticker','symbol');const type=(g('type')||'BUY').toUpperCase();const qty=Math.abs(pn(g('qty','quantity')));const price=Math.abs(pn(g('price')));const comm=Math.abs(pn(g('cost','commission','fee')));const broker=g('broker')||'Manual';if(!ticker2)return null;return{date:nd(date),ticker:ticker2.toUpperCase(),product:g('product')||ticker2,isin:'',type,qty,price,total:qty*price,currency:g('currency')||'EUR',broker,assetType:ga(ticker2,''),commission:comm,autofx:0,totalCost:comm,wht:0};}
 
+
+// ══════════════════════════════════════════════════════════════════════════════
+// EQUATE PLUS (Siemens Healthineers — Share Matching / MIP) — declaração de fim de ano em PDF
+// ══════════════════════════════════════════════════════════════════════════════
+// Reconstrói linhas de texto a partir dos itens do pdf.js (colunas separadas por " | ")
+function pdfLines(pages){
+  const out=[];
+  pages.forEach(items=>{
+    const L=[];
+    items.filter(i=>i.s&&i.s.trim()!=='').forEach(i=>{let l=L.find(l=>Math.abs(l.y-i.y)<=2.5);if(!l){l={y:i.y,it:[]};L.push(l);}l.it.push(i);});
+    L.sort((a,b)=>b.y-a.y).forEach(l=>{
+      l.it.sort((a,b)=>a.x-b.x);let s='',end=null;
+      l.it.forEach(i=>{const gap=end===null?0:i.x-end;s+=end===null?'':gap>12?' | ':gap>1.5?' ':'';s+=i.s;end=i.x+i.w;});
+      out.push(s.replace(/\s+/g,' ').trim());
+    });
+  });
+  return out;
+}
+const EQ_MONTHS={jan:1,fev:2,feb:2,mar:3,abr:4,apr:4,mai:5,may:5,jun:6,jul:7,ago:8,aug:8,set:9,sep:9,out:10,oct:10,nov:11,dez:12,dec:12};
+function eqDate(s){const m=String(s||'').trim().toLowerCase().match(/^(\d{1,2})\.? ([a-zç]{3})[a-z.]* (\d{4})$/);if(!m||!EQ_MONTHS[m[2]])return null;return`${m[3]}-${String(EQ_MONTHS[m[2]]).padStart(2,'0')}-${m[1].padStart(2,'0')}`;}
+function eqNum(s){const t=String(s||'').replace(/EUR/i,'').replace(/[\s ]/g,'').trim();if(!/^-?[\d.,]+$/.test(t))return NaN;return parseFloat(/,\d{1,3}$/.test(t)&&!/\.\d+,/.test(t)?t.replace(/\./g,'').replace(',','.'):t.replace(/,/g,''));}
+const EQ_ISIN='DE000SHL1006',EQ_TK='SHL',EQ_NAME='Siemens Healthineers AG';
+function parseEQUATE_LINES(lines){
+  const log=[],lots=[],divs=[],other=[];
+  // Período da declaração
+  let from=null,to=null;
+  for(const l of lines){const m=l.match(/(\d{1,2} [a-zç]{3} \d{4}) - (\d{1,2} [a-zç]{3} \d{4})/i);if(m){from=eqDate(m[1]);to=eqDate(m[2]);if(from&&to)break;}}
+  let section='',last=null;
+  lines.forEach(l=>{
+    const c=l.split(' | ');
+    if(/^(Folha de pagamento|Transferência|Dividendo|Venda|Vendas|Compra|Sale|Sell|Transfer)$/i.test(l)){section=l.toLowerCase();last=null;return;}
+    if(/^Nome do plano \|/.test(l)){section='lotes';last=null;return;}
+    if(/^Planos \|/.test(l)||/^Transações \|/.test(l)){section='';last=null;}
+    // Lote: Plano | Instrumento | Data de alocação | Base de custo | Quantidade | Valor estimado
+    if(section==='lotes'&&c.length>=5){const d=eqDate(c[2]),cost=eqNum(c[3]),q=eqNum(c[4]);
+      if(d&&isFinite(cost)&&isFinite(q)&&q>0){last={plan:c[0],instr:c[1],date:d,cps:cost,qty:q};lots.push(last);return;}}
+    if(section==='lotes'&&last&&c.length===1&&!/^Página/.test(l)&&!/^Siemens Healthineers Share:/.test(l)){last.instr+=' '+l;return;}
+    if(section==='dividendo'&&c.length>=8){const dEx=eqDate(c[0]),dPay=eqDate(c[1]);
+      if(dEx&&dPay){divs.push({date:dPay,exDate:dEx,qty:eqNum(c[2]),gross:eqNum(c[4]),tax:eqNum(c[5]),fees:eqNum(c[6])||0,net:eqNum(c[7])});return;}}
+    if(section&&section!=='lotes'&&section!=='dividendo'&&c.length>=3&&eqDate(c[0]))other.push(section+': '+l);
+  });
+  const kind=p=>/match/i.test(p.plan)?'MATCH':/dividend/i.test(p.plan)?'DRIP':/^MIP/i.test(p.plan)?'MIP':/^SMP/i.test(p.plan)?'SMP':'OUTRO';
+  const txns=lots.map(p=>{const k=kind(p),unm=/UNMATCHED/i.test(p.instr);
+    return{date:p.date,ticker:EQ_TK,product:EQ_NAME,isin:EQ_ISIN,type:'BUY',qty:p.qty,price:p.cps,total:p.cps*p.qty,currency:'EUR',broker:'Equate',assetType:'Ação',
+      commission:0,autofx:0,totalCost:0,wht:0,plan:k,unmatched:unm,note:(p.plan+' — '+p.instr).replace(/\s+/g,' '),_ref:p.date+'|'+p.qty,_rangeFrom:'0000-01-01',_rangeTo:to||p.date};});
+  divs.forEach(d=>txns.push({date:d.date,ticker:EQ_TK,product:EQ_NAME,isin:EQ_ISIN,type:'DIV',qty:1,price:d.gross,total:d.gross,currency:'EUR',broker:'Equate',assetType:'Ação',
+    commission:d.fees||0,autofx:0,totalCost:0,wht:d.tax||0,_rangeFrom:from||d.date,_rangeTo:to||d.date}));
+  const by=k=>txns.filter(t=>t.plan===k);const sq=a=>a.reduce((s,t)=>s+t.qty,0);
+  log.push(`[OK] Equate ${from||'?'} a ${to||'?'}: ${lots.length} lotes (${sq(txns.filter(t=>t.type==='BUY')).toFixed(3)} ações) | ${divs.length} dividendo(s)`);
+  log.push(`[INFO] Compras SMP ${sq(by('SMP')).toFixed(3)} · MIP ${sq(by('MIP')).toFixed(3)} · Matching ${sq(by('MATCH')).toFixed(3)} · Dividendos reinvestidos ${sq(by('DRIP')).toFixed(3)}`);
+  const un=txns.filter(t=>t.unmatched);if(un.length)log.push(`[INFO] ${sq(un).toFixed(3)} ações SMP ainda sem matching (UNMATCHED)`);
+  if(by('OUTRO').length)log.push(`[AVISO] ${by('OUTRO').length} lote(s) de plano desconhecido: `+by('OUTRO').map(t=>t.note).join('; '));
+  if(other.some(o=>/^(venda|vendas|sale|sell)/.test(o)))log.push('[AVISO] A declaração tem vendas — ainda não tratadas pela app: '+other.filter(o=>/^(venda|vendas|sale|sell)/.test(o)).join(' | '));
+  return{transactions:txns,log,from,to};
+}
+// Vários PDFs: lotes vêm da declaração mais recente (posições a 31/12); dividendos de todas
+function mergeEQUATE(results){
+  results.sort((a,b)=>(a.to||'').localeCompare(b.to||''));
+  const newest=results[results.length-1],txns=[],log=[],seen=new Set();
+  results.forEach(r=>{log.push(...r.log);r.transactions.filter(t=>t.type==='DIV').forEach(t=>{const k=t.date+'|'+t.total;if(!seen.has(k)){seen.add(k);txns.push(t);}});});
+  txns.push(...newest.transactions.filter(t=>t.type==='BUY'));
+  if(results.length>1)log.unshift(`[OK] ${results.length} declarações — lotes da mais recente (${newest.to}), dividendos de todas`);
+  return{transactions:txns,log};
+}
+let _pdfjsP=null;
+function loadPdfJs(){
+  if(window.pdfjsLib)return Promise.resolve(window.pdfjsLib);
+  if(_pdfjsP)return _pdfjsP;
+  _pdfjsP=new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js';
+    s.onload=()=>{window.pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';res(window.pdfjsLib);};
+    s.onerror=()=>{_pdfjsP=null;rej(new Error('Não consegui carregar o leitor de PDF'));};document.head.appendChild(s);});
+  return _pdfjsP;
+}
+async function pdfToLines(arrayBuffer){
+  const pdfjs=await loadPdfJs();const doc=await pdfjs.getDocument({data:new Uint8Array(arrayBuffer)}).promise;const pages=[];
+  for(let i=1;i<=doc.numPages;i++){const tc=await(await doc.getPage(i)).getTextContent();pages.push(tc.items.filter(it=>it.str!==undefined).map(it=>({s:it.str,x:it.transform[4],y:it.transform[5],w:it.width})));}
+  return pdfLines(pages);
+}
