@@ -371,7 +371,7 @@ function parseEQUATE_LINES(lines){
     // Lote: Plano | Instrumento | Data de alocação | Base de custo | Quantidade | Valor estimado
     if(section==='lotes'&&c.length>=5){const d=eqDate(c[2]),cost=eqNum(c[3]),q=eqNum(c[4]);
       if(d&&isFinite(cost)&&isFinite(q)&&q>0){last={plan:c[0],instr:c[1],date:d,cps:cost,qty:q};lots.push(last);return;}}
-    if(section==='lotes'&&last&&c.length===1&&!/^Página/.test(l)&&!/^Siemens Healthineers Share:/.test(l)){last.instr+=' '+l;return;}
+    if(section==='lotes'&&last&&c.length===1&&!/^(Página|Siemens Healthineers Share:|\d{4} Zurich|Switzerland|Suíça|Declaração|Plan holdings)/i.test(l)){last.instr+=' '+l;return;}
     if(section==='dividendo'&&c.length>=8){const dEx=eqDate(c[0]),dPay=eqDate(c[1]);
       if(dEx&&dPay){divs.push({date:dPay,exDate:dEx,qty:eqNum(c[2]),gross:eqNum(c[4]),tax:eqNum(c[5]),fees:eqNum(c[6])||0,net:eqNum(c[7])});return;}}
     if(section&&section!=='lotes'&&section!=='dividendo'&&c.length>=3&&eqDate(c[0]))other.push(section+': '+l);
